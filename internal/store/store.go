@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/kayushkin/logstack/internal/models"
+	"github.com/kayushkin/logstack/models"
 )
 
 // Store defines the interface for log storage

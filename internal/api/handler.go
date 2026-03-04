@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/kayushkin/logstack/internal/models"
+	"github.com/kayushkin/logstack/models"
 	"github.com/kayushkin/logstack/internal/store"
 )
 

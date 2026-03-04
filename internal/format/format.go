@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kayushkin/logstack/internal/models"
+	"github.com/kayushkin/logstack/models"
 )
 
 // Formatter converts logs to different output formats
