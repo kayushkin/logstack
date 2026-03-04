@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kayushkin/logstack/internal/models"
+	"github.com/kayushkin/logstack/models"
 )
 
 // Client is the logstack API client
