@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -37,6 +38,8 @@ func (h *Handler) SetupRoutes(r *gin.Engine) {
 
 		// Usage aggregation
 		api.GET("/usage", h.GetUsage)
+		api.GET("/max-usage", h.GetMaxUsage)
+		api.GET("/rate-limits", h.GetRateLimits)
 
 		// Health
 		api.GET("/health", h.Health)
@@ -218,6 +221,54 @@ func (h *Handler) GetUsage(c *gin.Context) {
 		Week:  week,
 		Month: month,
 	})
+}
+
+// GetMaxUsage handles GET /api/v1/max-usage
+func (h *Handler) GetMaxUsage(c *gin.Context) {
+	now := time.Now().UTC()
+
+	// Calculate billing period (1st of current month to 1st of next month)
+	periodStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := periodStart.AddDate(0, 1, 0)
+
+	usage, err := h.store.MaxUsage(periodStart, periodEnd)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, usage)
+}
+
+// GetRateLimits handles GET /api/v1/rate-limits
+func (h *Handler) GetRateLimits(c *gin.Context) {
+	now := time.Now().UTC()
+
+	// Default to last 7 days
+	from := now.Add(-7 * 24 * time.Hour)
+	limit := 100
+
+	// Allow custom from parameter
+	if fromStr := c.Query("from"); fromStr != "" {
+		if parsed, err := time.Parse(time.RFC3339, fromStr); err == nil {
+			from = parsed
+		}
+	}
+
+	// Allow custom limit
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	rateLimits, err := h.store.RateLimits(from, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, rateLimits)
 }
 
 // Health handles GET /api/v1/health

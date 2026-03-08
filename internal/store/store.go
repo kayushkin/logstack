@@ -31,6 +31,12 @@ type Store interface {
 	// Usage returns aggregated token usage grouped by agent+orchestrator
 	Usage(from time.Time) ([]models.UsageStats, error)
 
+	// MaxUsage returns comprehensive Max subscription usage for a billing period
+	MaxUsage(from, to time.Time) (*models.MaxUsageResponse, error)
+
+	// RateLimits returns recent 429 error events
+	RateLimits(from time.Time, limit int) (*models.RateLimitsResponse, error)
+
 	// Get retrieves a single log by ID
 	Get(id string) (*models.LogEntry, error)
 
@@ -290,6 +296,313 @@ func (s *FileStore) Usage(from time.Time) ([]models.UsageStats, error) {
 		out = append(out, *s)
 	}
 	return out, nil
+}
+
+// Pricing per 1M tokens (input, output, cache_read, cache_write)
+var modelPricing = map[string][4]float64{
+	"claude-opus-4-6":      {15.0, 75.0, 3.75, 18.75},
+	"claude-opus-4-5":      {15.0, 75.0, 3.75, 18.75},
+	"claude-opus-4":        {15.0, 75.0, 3.75, 18.75},
+	"claude-opus-3-5":      {15.0, 75.0, 3.75, 18.75},
+	"claude-sonnet-4-5":    {3.0, 15.0, 0.30, 3.75},
+	"claude-sonnet-4":      {3.0, 15.0, 0.30, 3.75},
+	"claude-sonnet-3-5":    {3.0, 15.0, 0.30, 3.75},
+	"claude-sonnet-3":      {3.0, 15.0, 0.30, 3.75},
+	"claude-haiku-3-5":     {0.25, 1.25, 0.03, 0.30},
+	"claude-haiku-3":       {0.25, 1.25, 0.03, 0.30},
+}
+
+// normalizeModel converts various model name formats to a standard form
+func normalizeModel(model string) string {
+	model = strings.ToLower(model)
+	// Handle common variations
+	model = strings.ReplaceAll(model, "anthropic/", "")
+	model = strings.ReplaceAll(model, "claude-3-5-", "claude-")
+	model = strings.ReplaceAll(model, "claude-3-", "claude-")
+	return model
+}
+
+// calculateCost estimates the cost based on token usage and model
+func calculateCost(model string, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int) float64 {
+	normalizedModel := normalizeModel(model)
+	
+	// Find matching pricing
+	var pricing [4]float64
+	found := false
+	for modelPattern, prices := range modelPricing {
+		if strings.Contains(normalizedModel, strings.TrimPrefix(modelPattern, "claude-")) {
+			pricing = prices
+			found = true
+			break
+		}
+	}
+	
+	// Default to sonnet pricing if no match
+	if !found {
+		pricing = [4]float64{3.0, 15.0, 0.30, 3.75}
+	}
+	
+	cost := float64(inputTokens)/1_000_000*pricing[0] +
+		float64(outputTokens)/1_000_000*pricing[1] +
+		float64(cacheReadTokens)/1_000_000*pricing[2] +
+		float64(cacheWriteTokens)/1_000_000*pricing[3]
+	
+	return cost
+}
+
+// MaxUsage returns comprehensive Max subscription usage for a billing period
+func (s *FileStore) MaxUsage(from, to time.Time) (*models.MaxUsageResponse, error) {
+	params := models.QueryParams{
+		Type:  "outbound",
+		From:  from,
+		To:    to,
+		Limit: 500000, // no practical limit
+	}
+
+	entries, err := s.Query(params)
+	if err != nil {
+		return nil, err
+	}
+
+	// Track 429 errors for rate limit info
+	params429 := models.QueryParams{
+		Level: "error",
+		From:  from,
+		To:    to,
+		Limit: 10000,
+	}
+	entries429, _ := s.Query(params429)
+
+	response := &models.MaxUsageResponse{
+		PeriodStart:    from.Format(time.RFC3339),
+		PeriodEnd:      to.Format(time.RFC3339),
+		ByModel:        make(map[string]models.MaxUsageByModel),
+		ByOrchestrator: make(map[string]models.MaxUsageByOrchestrator),
+		ByDay:          []models.MaxUsageByDay{},
+		RateLimits:     models.MaxUsageRateLimits{},
+	}
+
+	// Aggregate data structures
+	byDayMap := make(map[string]*models.MaxUsageByDay)
+	var last429 time.Time
+
+	// Process outbound messages for usage
+	for _, entry := range entries {
+		contentBytes, err := json.Marshal(entry.Content)
+		if err != nil {
+			continue
+		}
+
+		var content struct {
+			Agent        string `json:"agent"`
+			Orchestrator string `json:"orchestrator"`
+			Meta         *struct {
+				InputTokens         int    `json:"input_tokens"`
+				OutputTokens        int    `json:"output_tokens"`
+				CacheReadTokens     int    `json:"cache_read_tokens"`
+				CacheCreationTokens int    `json:"cache_creation_tokens"`
+				Model               string `json:"model"`
+			} `json:"meta"`
+		}
+
+		if err := json.Unmarshal(contentBytes, &content); err != nil {
+			continue
+		}
+
+		if content.Meta == nil {
+			continue
+		}
+
+		model := content.Meta.Model
+		if model == "" {
+			model = entry.Model
+		}
+		orchestrator := content.Orchestrator
+		if orchestrator == "" {
+			orchestrator = "unknown"
+		}
+
+		inputTokens := content.Meta.InputTokens
+		outputTokens := content.Meta.OutputTokens
+		cacheReadTokens := content.Meta.CacheReadTokens
+		cacheWriteTokens := content.Meta.CacheCreationTokens
+
+		// Calculate cost for this entry
+		cost := calculateCost(model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens)
+
+		// Update totals
+		response.Totals.InputTokens += inputTokens
+		response.Totals.OutputTokens += outputTokens
+		response.Totals.CacheReadTokens += cacheReadTokens
+		response.Totals.CacheWriteTokens += cacheWriteTokens
+		response.Totals.TotalTokens += inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens
+		response.Totals.APICalls++
+		response.Totals.EstimatedCost += cost
+
+		// Update by_model
+		modelStats := response.ByModel[model]
+		modelStats.InputTokens += inputTokens
+		modelStats.OutputTokens += outputTokens
+		modelStats.CacheReadTokens += cacheReadTokens
+		modelStats.CacheWriteTokens += cacheWriteTokens
+		modelStats.APICalls++
+		modelStats.EstimatedCost += cost
+		response.ByModel[model] = modelStats
+
+		// Update by_orchestrator
+		orchStats := response.ByOrchestrator[orchestrator]
+		orchStats.InputTokens += inputTokens
+		orchStats.OutputTokens += outputTokens
+		orchStats.CacheReadTokens += cacheReadTokens
+		orchStats.CacheWriteTokens += cacheWriteTokens
+		orchStats.APICalls++
+		orchStats.EstimatedCost += cost
+		response.ByOrchestrator[orchestrator] = orchStats
+
+		// Update by_day
+		dayKey := entry.Timestamp.Format("2006-01-02")
+		dayStats, ok := byDayMap[dayKey]
+		if !ok {
+			dayStats = &models.MaxUsageByDay{Date: dayKey}
+			byDayMap[dayKey] = dayStats
+		}
+		dayStats.InputTokens += inputTokens
+		dayStats.OutputTokens += outputTokens
+		dayStats.CacheReadTokens += cacheReadTokens
+		dayStats.CacheWriteTokens += cacheWriteTokens
+		dayStats.APICalls++
+		dayStats.Cost += cost
+	}
+
+	// Process 429 errors for rate limits
+	for _, entry := range entries429 {
+		// Check if this is a 429 error
+		contentBytes, err := json.Marshal(entry.Content)
+		if err != nil {
+			continue
+		}
+
+		var content struct {
+			StatusCode int    `json:"status_code"`
+			Error      string `json:"error"`
+			Message    string `json:"message"`
+		}
+
+		if err := json.Unmarshal(contentBytes, &content); err != nil {
+			continue
+		}
+
+		is429 := content.StatusCode == 429 ||
+			strings.Contains(content.Error, "429") ||
+			strings.Contains(content.Message, "429") ||
+			strings.Contains(content.Error, "rate limit") ||
+			strings.Contains(content.Message, "rate limit") ||
+			strings.Contains(content.Error, "overloaded") ||
+			strings.Contains(content.Message, "overloaded")
+
+		if is429 {
+			response.RateLimits.Count429++
+			if entry.Timestamp.After(last429) {
+				last429 = entry.Timestamp
+			}
+		}
+	}
+
+	// Set last 429 timestamp
+	if !last429.IsZero() {
+		response.RateLimits.Last429 = last429.Format(time.RFC3339)
+	}
+
+	// Convert byDayMap to sorted slice
+	for date, stats := range byDayMap {
+		response.ByDay = append(response.ByDay, *stats)
+		_ = date // avoid unused variable error
+	}
+
+	// Sort by_day by date
+	sortByDay(response.ByDay)
+
+	return response, nil
+}
+
+// sortByDay sorts the by_day slice by date
+func sortByDay(days []models.MaxUsageByDay) {
+	for i := 0; i < len(days)-1; i++ {
+		for j := i + 1; j < len(days); j++ {
+			if days[i].Date > days[j].Date {
+				days[i], days[j] = days[j], days[i]
+			}
+		}
+	}
+}
+
+// RateLimits returns recent 429 error events
+func (s *FileStore) RateLimits(from time.Time, limit int) (*models.RateLimitsResponse, error) {
+	if limit == 0 {
+		limit = 100
+	}
+
+	params := models.QueryParams{
+		Level: "error",
+		From:  from,
+		Limit: 10000, // Scan more to filter for 429s
+	}
+
+	entries, err := s.Query(params)
+	if err != nil {
+		return nil, err
+	}
+
+	response := &models.RateLimitsResponse{
+		Events: []models.RateLimitEvent{},
+	}
+
+	for _, entry := range entries {
+		contentBytes, err := json.Marshal(entry.Content)
+		if err != nil {
+			continue
+		}
+
+		var content struct {
+			StatusCode   int    `json:"status_code"`
+			Error        string `json:"error"`
+			Message      string `json:"message"`
+			Model        string `json:"model"`
+			Orchestrator string `json:"orchestrator"`
+		}
+
+		if err := json.Unmarshal(contentBytes, &content); err != nil {
+			continue
+		}
+
+		is429 := content.StatusCode == 429 ||
+			strings.Contains(content.Error, "429") ||
+			strings.Contains(content.Message, "429") ||
+			strings.Contains(content.Error, "rate limit") ||
+			strings.Contains(content.Message, "rate limit") ||
+			strings.Contains(content.Error, "overloaded") ||
+			strings.Contains(content.Message, "overloaded")
+
+		if is429 {
+			event := models.RateLimitEvent{
+				Timestamp:    entry.Timestamp.Format(time.RFC3339),
+				Model:        content.Model,
+				Orchestrator: content.Orchestrator,
+				Message:      content.Error,
+			}
+			if event.Message == "" {
+				event.Message = content.Message
+			}
+			response.Events = append(response.Events, event)
+			response.Total++
+
+			if len(response.Events) >= limit {
+				break
+			}
+		}
+	}
+
+	return response, nil
 }
 
 // Get retrieves a single log by ID

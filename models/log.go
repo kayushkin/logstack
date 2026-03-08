@@ -118,3 +118,77 @@ type Stats struct {
 	TotalTokensOut int            `json:"total_tokens_out"`
 	AvgLatencyMs   float64        `json:"avg_latency_ms"`
 }
+
+// MaxUsageTotals holds overall usage totals for the billing period
+type MaxUsageTotals struct {
+	InputTokens      int     `json:"input_tokens"`
+	OutputTokens     int     `json:"output_tokens"`
+	CacheReadTokens  int     `json:"cache_read_tokens"`
+	CacheWriteTokens int     `json:"cache_write_tokens"`
+	TotalTokens      int     `json:"total_tokens"`
+	APICalls         int     `json:"api_calls"`
+	EstimatedCost    float64 `json:"estimated_cost"`
+}
+
+// MaxUsageByModel holds usage stats for a single model
+type MaxUsageByModel struct {
+	InputTokens      int     `json:"input_tokens"`
+	OutputTokens     int     `json:"output_tokens"`
+	CacheReadTokens  int     `json:"cache_read_tokens"`
+	CacheWriteTokens int     `json:"cache_write_tokens"`
+	APICalls         int     `json:"api_calls"`
+	EstimatedCost    float64 `json:"estimated_cost"`
+}
+
+// MaxUsageByOrchestrator holds usage stats for a single orchestrator
+type MaxUsageByOrchestrator struct {
+	InputTokens      int     `json:"input_tokens"`
+	OutputTokens     int     `json:"output_tokens"`
+	CacheReadTokens  int     `json:"cache_read_tokens"`
+	CacheWriteTokens int     `json:"cache_write_tokens"`
+	APICalls         int     `json:"api_calls"`
+	EstimatedCost    float64 `json:"estimated_cost"`
+}
+
+// MaxUsageByDay holds usage stats for a single day
+type MaxUsageByDay struct {
+	Date             string  `json:"date"`
+	InputTokens      int     `json:"input_tokens"`
+	OutputTokens     int     `json:"output_tokens"`
+	CacheReadTokens  int     `json:"cache_read_tokens"`
+	CacheWriteTokens int     `json:"cache_write_tokens"`
+	APICalls         int     `json:"api_calls"`
+	Cost             float64 `json:"cost"`
+}
+
+// MaxUsageRateLimits holds rate limit information
+type MaxUsageRateLimits struct {
+	Count429         int    `json:"429_count"`
+	Last429          string `json:"last_429,omitempty"`
+	ThrottledMinutes int    `json:"throttled_minutes"`
+}
+
+// MaxUsageResponse is the comprehensive API response for /api/v1/max-usage
+type MaxUsageResponse struct {
+	PeriodStart    string                          `json:"period_start"`
+	PeriodEnd      string                          `json:"period_end"`
+	Totals         MaxUsageTotals                  `json:"totals"`
+	ByModel        map[string]MaxUsageByModel      `json:"by_model"`
+	ByOrchestrator map[string]MaxUsageByOrchestrator `json:"by_orchestrator"`
+	ByDay          []MaxUsageByDay                 `json:"by_day"`
+	RateLimits     MaxUsageRateLimits              `json:"rate_limits"`
+}
+
+// RateLimitEvent represents a single 429 error event
+type RateLimitEvent struct {
+	Timestamp   string `json:"timestamp"`
+	Model       string `json:"model,omitempty"`
+	Orchestrator string `json:"orchestrator,omitempty"`
+	Message     string `json:"message,omitempty"`
+}
+
+// RateLimitsResponse is the API response for /api/v1/rate-limits
+type RateLimitsResponse struct {
+	Total  int              `json:"total"`
+	Events []RateLimitEvent `json:"events"`
+}
