@@ -28,6 +28,9 @@ type Store interface {
 	// Stats returns aggregate statistics
 	Stats(params models.QueryParams) (*models.Stats, error)
 
+	// Usage returns aggregated token usage grouped by agent+orchestrator
+	Usage(from time.Time) ([]models.UsageStats, error)
+
 	// Get retrieves a single log by ID
 	Get(id string) (*models.LogEntry, error)
 
@@ -215,6 +218,80 @@ func (s *FileStore) Stats(params models.QueryParams) (*models.Stats, error) {
 	return stats, nil
 }
 
+// Usage returns aggregated token usage from outbound messages since `from`.
+func (s *FileStore) Usage(from time.Time) ([]models.UsageStats, error) {
+	params := models.QueryParams{
+		Type:  "outbound",
+		From:  from,
+		Limit: 100000, // no practical limit
+	}
+
+	entries, err := s.Query(params)
+	if err != nil {
+		return nil, err
+	}
+
+	type agentKey struct{ agent, orch string }
+	agg := make(map[agentKey]*models.UsageStats)
+
+	for _, entry := range entries {
+		// Parse content to extract meta (content is interface{})
+		contentBytes, err := json.Marshal(entry.Content)
+		if err != nil {
+			continue
+		}
+
+		var content struct {
+			Agent        string `json:"agent"`
+			Orchestrator string `json:"orchestrator"`
+			Meta         *struct {
+				InputTokens         int    `json:"input_tokens"`
+				OutputTokens        int    `json:"output_tokens"`
+				DurationMs          int64  `json:"duration_ms"`
+				Model               string `json:"model"`
+				CacheReadTokens     int    `json:"cache_read_tokens"`
+				CacheCreationTokens int    `json:"cache_creation_tokens"`
+			} `json:"meta"`
+		}
+
+		if err := json.Unmarshal(contentBytes, &content); err != nil {
+			continue
+		}
+
+		if content.Meta == nil {
+			continue
+		}
+
+		agent := content.Agent
+		if agent == "" {
+			agent = entry.Agent
+		}
+
+		k := agentKey{agent, content.Orchestrator}
+		stats, ok := agg[k]
+		if !ok {
+			stats = &models.UsageStats{
+				Agent:        agent,
+				Orchestrator: content.Orchestrator,
+				Model:        content.Meta.Model,
+			}
+			agg[k] = stats
+		}
+
+		stats.Messages++
+		stats.InputTokens += content.Meta.InputTokens
+		stats.OutputTokens += content.Meta.OutputTokens
+		stats.TotalTokens += content.Meta.InputTokens + content.Meta.OutputTokens
+		stats.DurationMs += content.Meta.DurationMs
+	}
+
+	out := make([]models.UsageStats, 0, len(agg))
+	for _, s := range agg {
+		out = append(out, *s)
+	}
+	return out, nil
+}
+
 // Get retrieves a single log by ID
 func (s *FileStore) Get(id string) (*models.LogEntry, error) {
 	s.mu.RLock()
@@ -288,9 +365,22 @@ func (s *FileStore) buildIndex() error {
 func (s *FileStore) getDirsToScan(params models.QueryParams) []string {
 	var dirs []string
 
-	if !params.From.IsZero() && !params.To.IsZero() {
-		// Scan specific date range
-		for d := params.From; d.Before(params.To) || d.Equal(params.To); d = d.AddDate(0, 0, 1) {
+	if !params.From.IsZero() {
+		// Scan from start date to end (or now)
+		end := params.To
+		if end.IsZero() {
+			end = time.Now()
+		}
+		for d := params.From; !d.After(end); d = d.AddDate(0, 0, 1) {
+			dir := filepath.Join(s.baseDir, d.Format("2006-01-02"))
+			if _, err := os.Stat(dir); err == nil {
+				dirs = append(dirs, dir)
+			}
+		}
+	} else if !params.To.IsZero() {
+		// Scan up to end date (last 30 days before To)
+		start := params.To.AddDate(0, 0, -30)
+		for d := start; !d.After(params.To); d = d.AddDate(0, 0, 1) {
 			dir := filepath.Join(s.baseDir, d.Format("2006-01-02"))
 			if _, err := os.Stat(dir); err == nil {
 				dirs = append(dirs, dir)

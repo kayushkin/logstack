@@ -28,3 +28,4 @@ go.work.sum
 .vscode/
 *.swp
 *.swo
+logstack-linux-amd64

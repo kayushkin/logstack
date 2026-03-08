@@ -89,6 +89,25 @@ type GroupedLogs struct {
 	Logs     []LogEntry `json:"logs,omitempty"`
 }
 
+// UsageStats holds aggregated token usage for an agent over a time period.
+type UsageStats struct {
+	Agent        string `json:"agent"`
+	Orchestrator string `json:"orchestrator"`
+	Model        string `json:"model,omitempty"`
+	Messages     int    `json:"messages"`
+	InputTokens  int    `json:"input_tokens"`
+	OutputTokens int    `json:"output_tokens"`
+	TotalTokens  int    `json:"total_tokens"`
+	DurationMs   int64  `json:"duration_ms"`
+}
+
+// UsageResponse is the API response for /api/v1/usage.
+type UsageResponse struct {
+	Day   []UsageStats `json:"day"`
+	Week  []UsageStats `json:"week"`
+	Month []UsageStats `json:"month"`
+}
+
 // Stats for log statistics
 type Stats struct {
 	TotalEntries   int            `json:"total_entries"`

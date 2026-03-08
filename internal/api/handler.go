@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/kayushkin/logstack/models"
@@ -33,6 +34,9 @@ func (h *Handler) SetupRoutes(r *gin.Engine) {
 		// Aggregation
 		api.GET("/logs/group/:field", h.GroupLogs)
 		api.GET("/stats", h.GetStats)
+
+		// Usage aggregation
+		api.GET("/usage", h.GetUsage)
 
 		// Health
 		api.GET("/health", h.Health)
@@ -174,6 +178,46 @@ func (h *Handler) GetStats(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, stats)
+}
+
+// GetUsage handles GET /api/v1/usage
+func (h *Handler) GetUsage(c *gin.Context) {
+	now := time.Now().UTC()
+
+	day, err := h.store.Usage(now.Add(-24 * time.Hour))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	week, err := h.store.Usage(now.Add(-7 * 24 * time.Hour))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	month, err := h.store.Usage(now.Add(-30 * 24 * time.Hour))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Ensure non-nil slices for JSON
+	if day == nil {
+		day = []models.UsageStats{}
+	}
+	if week == nil {
+		week = []models.UsageStats{}
+	}
+	if month == nil {
+		month = []models.UsageStats{}
+	}
+
+	c.JSON(http.StatusOK, models.UsageResponse{
+		Day:   day,
+		Week:  week,
+		Month: month,
+	})
 }
 
 // Health handles GET /api/v1/health
