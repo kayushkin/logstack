@@ -1,5 +1,5 @@
 # Binaries
-logstack
+/logstack
 *.exe
 *.exe~
 *.dll
