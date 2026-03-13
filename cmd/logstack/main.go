@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/kayushkin/logstack/internal/api"
+	"github.com/kayushkin/logstack/internal/stats"
 	"github.com/kayushkin/logstack/internal/store"
 )
 
@@ -28,10 +29,17 @@ func main() {
 	// Create API handler
 	h := api.NewHandler(s)
 
+	// Server stats (request counting, uptime)
+	serverStats := stats.New()
+
 	// Setup router
 	r := gin.New()
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
+	r.Use(serverStats.Middleware())
+
+	// Server stats endpoint
+	r.GET("/stats", serverStats.Handler())
 
 	// Setup routes
 	h.SetupRoutes(r)
