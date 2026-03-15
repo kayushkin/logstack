@@ -661,6 +661,7 @@ func (s *FileStore) buildIndex() error {
 		defer f.Close()
 
 		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024) // 1MB max line
 		for scanner.Scan() {
 			var entry models.LogEntry
 			if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
@@ -749,6 +750,7 @@ func (s *FileStore) scanFile(path string, params models.QueryParams) ([]models.L
 	defer f.Close()
 
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024) // 1MB max line
 	for scanner.Scan() {
 		var entry models.LogEntry
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
