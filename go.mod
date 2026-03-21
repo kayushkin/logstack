@@ -5,10 +5,8 @@ go 1.24.0
 require (
 	github.com/gin-gonic/gin v1.9.1
 	github.com/google/uuid v1.6.0
-	github.com/kayushkin/bus v0.0.0
+	github.com/kayushkin/bus v0.0.0-20260321234814-6d7d8f0ba371
 )
-
-replace github.com/kayushkin/bus => ../bus
 
 require (
 	github.com/bytedance/sonic v1.9.1 // indirect
