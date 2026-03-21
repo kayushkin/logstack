@@ -781,6 +781,9 @@ func matchesParams(entry *models.LogEntry, params models.QueryParams) bool {
 	if params.SessionID != "" && entry.SessionID != params.SessionID {
 		return false
 	}
+	if params.TurnID != "" && entry.TurnID != params.TurnID {
+		return false
+	}
 	if params.Model != "" && entry.Model != params.Model {
 		return false
 	}

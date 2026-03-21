@@ -1,13 +1,19 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/kayushkin/bus"
 	"github.com/kayushkin/logstack/internal/api"
 	"github.com/kayushkin/logstack/internal/stats"
 	"github.com/kayushkin/logstack/internal/store"
+	"github.com/kayushkin/logstack/models"
 )
 
 func main() {
@@ -15,6 +21,7 @@ func main() {
 	port := getEnv("LOGSTACK_PORT", "8081")
 	dataDir := getEnv("LOGSTACK_DATA_DIR", "./logs")
 	ginMode := getEnv("GIN_MODE", "release")
+	natsURL := getEnv("NATS_URL", "nats://localhost:4222")
 
 	// Set gin mode
 	gin.SetMode(ginMode)
@@ -25,6 +32,16 @@ func main() {
 		log.Fatalf("Failed to initialize store: %v", err)
 	}
 	log.Printf("Log stack initialized with data dir: %s", dataDir)
+
+	// Connect to NATS
+	nc, err := bus.Connect(bus.Options{URL: natsURL, Name: "logstack"})
+	if err != nil {
+		log.Printf("WARNING: NATS connection failed: %v (continuing without NATS)", err)
+	} else {
+		defer nc.Close()
+		log.Printf("Connected to NATS at %s", natsURL)
+		setupNATS(nc, s)
+	}
 
 	// Create API handler
 	h := api.NewHandler(s)
@@ -48,6 +65,68 @@ func main() {
 	log.Printf("Log stack listening on :%s", port)
 	if err := r.Run(":" + port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
+	}
+}
+
+func setupNATS(nc *bus.Client, s store.Store) {
+	// Subscribe to logs.> for log ingestion
+	_, err := nc.Subscribe("logs.>", func(subject string, data []byte) {
+		var entry models.LogEntry
+		if err := json.Unmarshal(data, &entry); err != nil {
+			log.Printf("NATS: failed to unmarshal log entry on %s: %v", subject, err)
+			return
+		}
+
+		// Set defaults
+		if entry.ID == "" {
+			entry.ID = uuid.New().String()
+		}
+		if entry.Timestamp.IsZero() {
+			entry.Timestamp = time.Now()
+		}
+		// Extract source from subject if not set (e.g. "logs.scheduler" -> "scheduler")
+		if entry.Source == "" {
+			parts := strings.SplitN(subject, ".", 2)
+			if len(parts) > 1 {
+				entry.Source = parts[1]
+			}
+		}
+
+		if err := s.Write(&entry); err != nil {
+			log.Printf("NATS: failed to write log entry: %v", err)
+			return
+		}
+	})
+	if err != nil {
+		log.Printf("NATS: failed to subscribe to logs.>: %v", err)
+	} else {
+		log.Printf("NATS: subscribed to logs.>")
+	}
+
+	// Reply handler for logstack.query
+	_, err = nc.Reply("logstack.query", func(data []byte) (any, error) {
+		var params models.QueryParams
+		if err := json.Unmarshal(data, &params); err != nil {
+			return nil, err
+		}
+		if params.Limit == 0 {
+			params.Limit = 100
+		}
+
+		logs, err := s.Query(params)
+		if err != nil {
+			return nil, err
+		}
+
+		return map[string]any{
+			"logs":  logs,
+			"count": len(logs),
+		}, nil
+	})
+	if err != nil {
+		log.Printf("NATS: failed to register logstack.query handler: %v", err)
+	} else {
+		log.Printf("NATS: registered reply handler for logstack.query")
 	}
 }
 

@@ -22,6 +22,9 @@ type LogEntry struct {
 	// Session ID for grouping related logs
 	SessionID string `json:"session_id,omitempty"`
 
+	// Turn ID — unique within a session (inber: turn number, openclaw: message id)
+	TurnID string `json:"turn_id,omitempty"`
+
 	// Model used (opus46, glm-5, sonnet-4-5, etc.)
 	Model string `json:"model,omitempty"`
 
@@ -73,6 +76,7 @@ type QueryParams struct {
 	Agent     string    `form:"agent"`
 	Channel   string    `form:"channel"`
 	SessionID string    `form:"session_id"`
+	TurnID    string    `form:"turn_id"`
 	Model     string    `form:"model"`
 	Level     string    `form:"level"`
 	Type      string    `form:"type"`
