@@ -84,11 +84,11 @@ func setupNATS(nc *bus.Client, s store.Store) {
 		if entry.Timestamp.IsZero() {
 			entry.Timestamp = time.Now()
 		}
-		// Extract source from subject if not set (e.g. "logs.scheduler" -> "scheduler")
-		if entry.Source == "" {
+		// Extract orchestrator from subject if not set (e.g. "logs.scheduler" -> "scheduler")
+		if entry.Orchestrator == "" {
 			parts := strings.SplitN(subject, ".", 2)
 			if len(parts) > 1 {
-				entry.Source = parts[1]
+				entry.Orchestrator = parts[1]
 			}
 		}
 
@@ -247,7 +247,7 @@ func chatEventToLogEntry(raw map[string]interface{}, subject string) *models.Log
 	return &models.LogEntry{
 		ID:        uuid.New().String(),
 		Timestamp: ts,
-		Source:    orchestrator,
+		Orchestrator: orchestrator,
 		Agent:    agent,
 		Channel:  channel,
 		SessionID: session,

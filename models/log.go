@@ -10,14 +10,11 @@ type LogEntry struct {
 	// Timestamp when the log was created (ISO 8601)
 	Timestamp time.Time `json:"timestamp"`
 
-	// Source service (inber, si, claxon-android, etc.)
-	Source string `json:"source"`
+	// Orchestrator that ran this turn (openclaw, inber)
+	Orchestrator string `json:"orchestrator"`
 
-	// Agent/instance identifier (task-manager, worker, etc.)
+	// Agent/instance identifier
 	Agent string `json:"agent,omitempty"`
-
-	// Orchestrator that produced this entry (openclaw, inber)
-	Orchestrator string `json:"orchestrator,omitempty"`
 
 	// Channel where the interaction occurred (discord, tui, websocket)
 	Channel string `json:"channel,omitempty"`
@@ -98,7 +95,7 @@ const (
 
 // QueryParams for searching logs
 type QueryParams struct {
-	Source    string    `form:"source"`
+	Orchestrator string `form:"orchestrator"`
 	Agent     string    `form:"agent"`
 	Channel   string    `form:"channel"`
 	SessionID string    `form:"session_id"`
@@ -141,7 +138,7 @@ type UsageResponse struct {
 // Stats for log statistics
 type Stats struct {
 	TotalEntries   int            `json:"total_entries"`
-	BySource       map[string]int `json:"by_source"`
+	ByOrch         map[string]int `json:"by_orchestrator"`
 	ByLevel        map[string]int `json:"by_level"`
 	ByModel        map[string]int `json:"by_model"`
 	TotalTokensIn  int            `json:"total_tokens_in"`

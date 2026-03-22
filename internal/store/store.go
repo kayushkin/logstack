@@ -84,11 +84,11 @@ func (s *FileStore) Write(entry *models.LogEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Organize by date and source
-	// Structure: baseDir/YYYY-MM-DD/source.jsonl
+	// Organize by date and orchestrator
+	// Structure: baseDir/YYYY-MM-DD/orchestrator.jsonl
 	dateStr := entry.Timestamp.Format("2006-01-02")
-	filename := fmt.Sprintf("%s.jsonl", entry.Source)
-	if entry.Source == "" {
+	filename := fmt.Sprintf("%s.jsonl", entry.Orchestrator)
+	if entry.Orchestrator == "" {
 		filename = "unknown.jsonl"
 	}
 
@@ -187,7 +187,7 @@ func (s *FileStore) Stats(params models.QueryParams) (*models.Stats, error) {
 	}
 
 	stats := &models.Stats{
-		BySource: make(map[string]int),
+		ByOrch: make(map[string]int),
 		ByLevel:  make(map[string]int),
 		ByModel:  make(map[string]int),
 	}
@@ -198,8 +198,8 @@ func (s *FileStore) Stats(params models.QueryParams) (*models.Stats, error) {
 	for _, entry := range entries {
 		stats.TotalEntries++
 
-		if entry.Source != "" {
-			stats.BySource[entry.Source]++
+		if entry.Orchestrator != "" {
+			stats.ByOrch[entry.Orchestrator]++
 		}
 		if entry.Level != "" {
 			stats.ByLevel[entry.Level]++
@@ -782,9 +782,9 @@ func (s *FileStore) scanDir(dir string, params models.QueryParams) ([]models.Log
 		return nil, err
 	}
 
-	// Filter by source if specified
-	if params.Source != "" {
-		targetFile := params.Source + ".jsonl"
+	// Filter by orchestrator if specified
+	if params.Orchestrator != "" {
+		targetFile := params.Orchestrator + ".jsonl"
 		files = []string{filepath.Join(dir, targetFile)}
 	}
 
@@ -828,7 +828,7 @@ func (s *FileStore) scanFile(path string, params models.QueryParams) ([]models.L
 }
 
 func matchesParams(entry *models.LogEntry, params models.QueryParams) bool {
-	if params.Source != "" && entry.Source != params.Source {
+	if params.Orchestrator != "" && entry.Orchestrator != params.Orchestrator {
 		return false
 	}
 	if params.Agent != "" && entry.Agent != params.Agent {
@@ -863,8 +863,8 @@ func matchesParams(entry *models.LogEntry, params models.QueryParams) bool {
 
 func getGroupKey(entry *models.LogEntry, groupBy string) string {
 	switch groupBy {
-	case "source":
-		return entry.Source
+	case "orchestrator":
+		return entry.Orchestrator
 	case "agent":
 		return entry.Agent
 	case "channel":
