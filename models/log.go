@@ -16,6 +16,9 @@ type LogEntry struct {
 	// Agent/instance identifier (task-manager, worker, etc.)
 	Agent string `json:"agent,omitempty"`
 
+	// Orchestrator that produced this entry (openclaw, inber)
+	Orchestrator string `json:"orchestrator,omitempty"`
+
 	// Channel where the interaction occurred (discord, tui, websocket)
 	Channel string `json:"channel,omitempty"`
 
@@ -31,24 +34,47 @@ type LogEntry struct {
 	// Log level: debug, info, warn, error
 	Level string `json:"level"`
 
-	// Type of log entry (message, tool_call, error, metrics, etc.)
+	// Type of log entry: inbound, outbound, error, metrics, lifecycle, routing
 	Type string `json:"type"`
 
-	// The actual content/payload
+	// The actual content/payload (text, author, thinking)
 	Content interface{} `json:"content"`
 
-	// Token usage (if applicable)
+	// Turn stats for outbound messages (tokens, cost, tools)
+	Stats *TurnStats `json:"stats,omitempty"`
+
+	// Token usage (deprecated — use Stats)
 	TokensIn  int `json:"tokens_in,omitempty"`
 	TokensOut int `json:"tokens_out,omitempty"`
 
-	// Latency in milliseconds (if applicable)
+	// Latency in milliseconds (deprecated — use Stats.DurationMs)
 	LatencyMs int64 `json:"latency_ms,omitempty"`
 
 	// Error message (if level is error)
 	Error string `json:"error,omitempty"`
 
-	// Additional metadata
+	// Additional metadata (deprecated — use Stats)
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// TurnStats holds structured token/cost/tool stats for an outbound message.
+type TurnStats struct {
+	InputTokens         int         `json:"input_tokens,omitempty"`
+	OutputTokens        int         `json:"output_tokens,omitempty"`
+	CacheReadTokens     int         `json:"cache_read_tokens,omitempty"`
+	CacheCreationTokens int         `json:"cache_creation_tokens,omitempty"`
+	Cost                float64     `json:"cost,omitempty"`
+	DurationMs          int64       `json:"duration_ms,omitempty"`
+	Model               string      `json:"model,omitempty"`
+	ToolCalls           int         `json:"tool_calls,omitempty"`
+	Tools               []ToolEvent `json:"tools,omitempty"`
+}
+
+// ToolEvent represents a single tool invocation within a turn.
+type ToolEvent struct {
+	Tool       string `json:"tool"`
+	ToolInput  string `json:"tool_input,omitempty"`
+	ToolOutput string `json:"tool_output,omitempty"`
 }
 
 // LogType constants

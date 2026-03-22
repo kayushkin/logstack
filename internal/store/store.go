@@ -241,54 +241,83 @@ func (s *FileStore) Usage(from time.Time) ([]models.UsageStats, error) {
 	agg := make(map[agentKey]*models.UsageStats)
 
 	for _, entry := range entries {
-		// Parse content to extract meta (content is interface{})
-		contentBytes, err := json.Marshal(entry.Content)
-		if err != nil {
-			continue
+		// Prefer entry-level Stats (new format), fall back to content.meta (legacy)
+		var inputTokens, outputTokens int
+		var durationMs int64
+		var model, orchestrator string
+
+		orchestrator = entry.Orchestrator
+		agent := entry.Agent
+
+		if entry.Stats != nil {
+			inputTokens = entry.Stats.InputTokens
+			outputTokens = entry.Stats.OutputTokens
+			durationMs = entry.Stats.DurationMs
+			model = entry.Stats.Model
+		} else {
+			// Legacy: parse content for meta/orchestrator
+			contentBytes, err := json.Marshal(entry.Content)
+			if err != nil {
+				continue
+			}
+			var content struct {
+				Agent        string `json:"agent"`
+				Orchestrator string `json:"orchestrator"`
+				Meta         *struct {
+					InputTokens         int    `json:"input_tokens"`
+					OutputTokens        int    `json:"output_tokens"`
+					DurationMs          int64  `json:"duration_ms"`
+					Model               string `json:"model"`
+				} `json:"meta"`
+				Stats *struct {
+					InputTokens         int    `json:"input_tokens"`
+					OutputTokens        int    `json:"output_tokens"`
+					DurationMs          int64  `json:"duration_ms"`
+					Model               string `json:"model"`
+				} `json:"stats"`
+			}
+			if err := json.Unmarshal(contentBytes, &content); err != nil {
+				continue
+			}
+			meta := content.Meta
+			if meta == nil {
+				meta = content.Stats
+			}
+			if meta == nil {
+				continue
+			}
+			inputTokens = meta.InputTokens
+			outputTokens = meta.OutputTokens
+			durationMs = meta.DurationMs
+			model = meta.Model
+			if orchestrator == "" {
+				orchestrator = content.Orchestrator
+			}
+			if agent == "" {
+				agent = content.Agent
+			}
 		}
 
-		var content struct {
-			Agent        string `json:"agent"`
-			Orchestrator string `json:"orchestrator"`
-			Meta         *struct {
-				InputTokens         int    `json:"input_tokens"`
-				OutputTokens        int    `json:"output_tokens"`
-				DurationMs          int64  `json:"duration_ms"`
-				Model               string `json:"model"`
-				CacheReadTokens     int    `json:"cache_read_tokens"`
-				CacheCreationTokens int    `json:"cache_creation_tokens"`
-			} `json:"meta"`
+		if model == "" {
+			model = entry.Model
 		}
 
-		if err := json.Unmarshal(contentBytes, &content); err != nil {
-			continue
-		}
-
-		if content.Meta == nil {
-			continue
-		}
-
-		agent := content.Agent
-		if agent == "" {
-			agent = entry.Agent
-		}
-
-		k := agentKey{agent, content.Orchestrator}
+		k := agentKey{agent, orchestrator}
 		stats, ok := agg[k]
 		if !ok {
 			stats = &models.UsageStats{
 				Agent:        agent,
-				Orchestrator: content.Orchestrator,
-				Model:        content.Meta.Model,
+				Orchestrator: orchestrator,
+				Model:        model,
 			}
 			agg[k] = stats
 		}
 
 		stats.Messages++
-		stats.InputTokens += content.Meta.InputTokens
-		stats.OutputTokens += content.Meta.OutputTokens
-		stats.TotalTokens += content.Meta.InputTokens + content.Meta.OutputTokens
-		stats.DurationMs += content.Meta.DurationMs
+		stats.InputTokens += inputTokens
+		stats.OutputTokens += outputTokens
+		stats.TotalTokens += inputTokens + outputTokens
+		stats.DurationMs += durationMs
 	}
 
 	out := make([]models.UsageStats, 0, len(agg))
@@ -388,44 +417,66 @@ func (s *FileStore) MaxUsage(from, to time.Time) (*models.MaxUsageResponse, erro
 
 	// Process outbound messages for usage
 	for _, entry := range entries {
-		contentBytes, err := json.Marshal(entry.Content)
-		if err != nil {
-			continue
+		var inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int
+		var model, orchestrator string
+
+		orchestrator = entry.Orchestrator
+
+		if entry.Stats != nil {
+			inputTokens = entry.Stats.InputTokens
+			outputTokens = entry.Stats.OutputTokens
+			cacheReadTokens = entry.Stats.CacheReadTokens
+			cacheWriteTokens = entry.Stats.CacheCreationTokens
+			model = entry.Stats.Model
+		} else {
+			// Legacy: parse content for meta
+			contentBytes, err := json.Marshal(entry.Content)
+			if err != nil {
+				continue
+			}
+			var content struct {
+				Orchestrator string `json:"orchestrator"`
+				Meta         *struct {
+					InputTokens         int    `json:"input_tokens"`
+					OutputTokens        int    `json:"output_tokens"`
+					CacheReadTokens     int    `json:"cache_read_tokens"`
+					CacheCreationTokens int    `json:"cache_creation_tokens"`
+					Model               string `json:"model"`
+				} `json:"meta"`
+				Stats *struct {
+					InputTokens         int    `json:"input_tokens"`
+					OutputTokens        int    `json:"output_tokens"`
+					CacheReadTokens     int    `json:"cache_read_tokens"`
+					CacheCreationTokens int    `json:"cache_creation_tokens"`
+					Model               string `json:"model"`
+				} `json:"stats"`
+			}
+			if err := json.Unmarshal(contentBytes, &content); err != nil {
+				continue
+			}
+			meta := content.Meta
+			if meta == nil {
+				meta = content.Stats
+			}
+			if meta == nil {
+				continue
+			}
+			inputTokens = meta.InputTokens
+			outputTokens = meta.OutputTokens
+			cacheReadTokens = meta.CacheReadTokens
+			cacheWriteTokens = meta.CacheCreationTokens
+			model = meta.Model
+			if orchestrator == "" {
+				orchestrator = content.Orchestrator
+			}
 		}
 
-		var content struct {
-			Agent        string `json:"agent"`
-			Orchestrator string `json:"orchestrator"`
-			Meta         *struct {
-				InputTokens         int    `json:"input_tokens"`
-				OutputTokens        int    `json:"output_tokens"`
-				CacheReadTokens     int    `json:"cache_read_tokens"`
-				CacheCreationTokens int    `json:"cache_creation_tokens"`
-				Model               string `json:"model"`
-			} `json:"meta"`
-		}
-
-		if err := json.Unmarshal(contentBytes, &content); err != nil {
-			continue
-		}
-
-		if content.Meta == nil {
-			continue
-		}
-
-		model := content.Meta.Model
 		if model == "" {
 			model = entry.Model
 		}
-		orchestrator := content.Orchestrator
 		if orchestrator == "" {
 			orchestrator = "unknown"
 		}
-
-		inputTokens := content.Meta.InputTokens
-		outputTokens := content.Meta.OutputTokens
-		cacheReadTokens := content.Meta.CacheReadTokens
-		cacheWriteTokens := content.Meta.CacheCreationTokens
 
 		// Calculate cost for this entry
 		cost := calculateCost(model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens)
@@ -584,10 +635,18 @@ func (s *FileStore) RateLimits(from time.Time, limit int) (*models.RateLimitsRes
 			strings.Contains(content.Message, "overloaded")
 
 		if is429 {
+			orch := entry.Orchestrator
+			if orch == "" {
+				orch = content.Orchestrator
+			}
+			mdl := entry.Model
+			if mdl == "" {
+				mdl = content.Model
+			}
 			event := models.RateLimitEvent{
 				Timestamp:    entry.Timestamp.Format(time.RFC3339),
-				Model:        content.Model,
-				Orchestrator: content.Orchestrator,
+				Model:        mdl,
+				Orchestrator: orch,
 				Message:      content.Error,
 			}
 			if event.Message == "" {
