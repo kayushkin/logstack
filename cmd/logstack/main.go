@@ -103,49 +103,94 @@ func setupNATS(nc *bus.Client, s store.Store) {
 		log.Printf("NATS: subscribed to logs.>")
 	}
 
-	// Subscribe to chat.stream.* for streaming events (from all orchestrators)
-	_, err = nc.Subscribe("chat.stream.*", func(subject string, data []byte) {
-		var raw map[string]interface{}
-		if err := json.Unmarshal(data, &raw); err != nil {
-			log.Printf("NATS: failed to unmarshal chat.stream.* on %s: %v", subject, err)
+	// Subscribe to chat.inbound for user messages (all orchestrators)
+	_, err = nc.Subscribe("chat.inbound", func(subject string, data []byte) {
+		var msg struct {
+			Text         string `json:"text"`
+			Author       string `json:"author"`
+			Agent        string `json:"agent"`
+			Orchestrator string `json:"orchestrator"`
+			Channel      string `json:"channel"`
+		}
+		if err := json.Unmarshal(data, &msg); err != nil {
+			log.Printf("NATS: failed to unmarshal chat.inbound: %v", err)
 			return
 		}
-		entry := chatEventToLogEntry(raw, subject)
-		if entry == nil {
+		if msg.Agent == "" || msg.Text == "" {
 			return
+		}
+		// Skip system messages
+		if strings.HasPrefix(msg.Text, "[System Message]") || strings.HasPrefix(msg.Text, "System:") {
+			return
+		}
+		author := msg.Author
+		if author == "" {
+			author = "user"
+		}
+		entry := &models.LogEntry{
+			ID:           uuid.New().String(),
+			Timestamp:    time.Now(),
+			Agent:        msg.Agent,
+			Orchestrator: msg.Orchestrator,
+			Channel:      msg.Channel,
+			SessionID:    "main",
+			Level:        "info",
+			Type:         "inbound",
+			Content: map[string]interface{}{
+				"text":   msg.Text,
+				"author": author,
+			},
 		}
 		if err := s.Write(entry); err != nil {
-			log.Printf("NATS: failed to write chat.stream.* entry: %v", err)
+			log.Printf("NATS: failed to write chat.inbound entry: %v", err)
 		}
 	})
 	if err != nil {
-		log.Printf("NATS: failed to subscribe to chat.stream.*: %v", err)
+		log.Printf("NATS: failed to subscribe to chat.inbound: %v", err)
 	} else {
-		log.Printf("NATS: subscribed to chat.stream.*")
+		log.Printf("NATS: subscribed to chat.inbound")
 	}
 
-	// Subscribe to chat.completed for finished messages (JetStream)
-	err = nc.JetSubscribe("chat.completed", "logstack", func(subject string, data []byte) {
-		var raw map[string]interface{}
-		if err := json.Unmarshal(data, &raw); err != nil {
-			log.Printf("NATS: failed to unmarshal chat.completed: %v", err)
+	// Subscribe to chat.outbound for completed messages (JetStream, own consumer)
+	err = nc.JetSubscribe("chat.outbound", "logstack", func(subject string, data []byte) {
+		var msg struct {
+			Agent        string           `json:"agent"`
+			Orchestrator string           `json:"orchestrator"`
+			SessionID    string           `json:"session_id"`
+			Text         string           `json:"text"`
+			Stats        *models.TurnStats `json:"stats"`
+			Timestamp    time.Time        `json:"timestamp"`
+		}
+		if err := json.Unmarshal(data, &msg); err != nil {
+			log.Printf("NATS: failed to unmarshal chat.outbound: %v", err)
 			return
 		}
-		entry := chatEventToLogEntry(raw, subject)
-		if entry == nil {
+		if msg.Agent == "" || msg.Text == "" {
 			return
 		}
-		// Completed messages are outbound with level=info
-		entry.Type = "outbound"
-		entry.Level = "info"
+		content := map[string]interface{}{
+			"text":   msg.Text,
+			"author": msg.Agent,
+		}
+		entry := &models.LogEntry{
+			ID:           uuid.New().String(),
+			Timestamp:    msg.Timestamp,
+			Agent:        msg.Agent,
+			Orchestrator: msg.Orchestrator,
+			SessionID:    msg.SessionID,
+			Level:        "info",
+			Type:         "outbound",
+			Content:      content,
+			Stats:        msg.Stats,
+		}
 		if err := s.Write(entry); err != nil {
-			log.Printf("NATS: failed to write chat.completed entry: %v", err)
+			log.Printf("NATS: failed to write chat.outbound entry: %v", err)
 		}
 	})
 	if err != nil {
-		log.Printf("NATS: failed to subscribe to chat.completed: %v", err)
+		log.Printf("NATS: failed to subscribe to chat.outbound: %v", err)
 	} else {
-		log.Printf("NATS: subscribed to chat.completed (JetStream)")
+		log.Printf("NATS: subscribed to chat.outbound (JetStream, consumer: logstack)")
 	}
 
 	// Reply handler for logstack.query
@@ -172,89 +217,6 @@ func setupNATS(nc *bus.Client, s store.Store) {
 		log.Printf("NATS: failed to register logstack.query handler: %v", err)
 	} else {
 		log.Printf("NATS: registered reply handler for logstack.query")
-	}
-}
-
-// chatEventToLogEntry converts a ChatOutbound/OutboundMessage from NATS into a LogEntry.
-// Returns nil if the event should be skipped (e.g. status events).
-func chatEventToLogEntry(raw map[string]interface{}, subject string) *models.LogEntry {
-	agent, _ := raw["agent"].(string)
-	orchestrator, _ := raw["orchestrator"].(string)
-	if agent == "" {
-		return nil
-	}
-
-	stream, _ := raw["stream"].(string)
-	// Skip status events — they're not log-worthy
-	if stream == "status" {
-		return nil
-	}
-
-	// Determine log entry type from stream value
-	entryType := "outbound"
-	switch stream {
-	case "delta", "thinking":
-		entryType = stream
-	case "tool_call":
-		entryType = "tool_call"
-	case "tool_result":
-		entryType = "tool_result"
-	case "done":
-		entryType = "outbound"
-	}
-
-	text, _ := raw["text"].(string)
-	tool, _ := raw["tool"].(string)
-	channel, _ := raw["channel"].(string)
-	session, _ := raw["session"].(string)
-	turnID, _ := raw["turn_id"].(string)
-
-	// Build content matching the shape logEntryToMessage expects
-	content := map[string]interface{}{
-		"text":         text,
-		"agent":        agent,
-		"orchestrator": orchestrator,
-	}
-	if stream != "" {
-		content["type"] = stream
-	}
-	if tool != "" {
-		content["tool"] = tool
-	}
-	if stream == "tool_call" {
-		content["tool_input"] = text
-	} else if stream == "tool_result" {
-		content["tool_output"] = text
-	}
-	// Copy meta/stats if present
-	if meta, ok := raw["meta"]; ok && meta != nil {
-		content["stats"] = meta
-	}
-
-	var ts time.Time
-	if tsRaw, ok := raw["timestamp"]; ok {
-		switch v := tsRaw.(type) {
-		case string:
-			if parsed, err := time.Parse(time.RFC3339Nano, v); err == nil {
-				ts = parsed
-			}
-		}
-	}
-	if ts.IsZero() {
-		ts = time.Now()
-	}
-
-	return &models.LogEntry{
-		ID:        uuid.New().String(),
-		Timestamp: ts,
-		Orchestrator: orchestrator,
-		Agent:    agent,
-		Channel:  channel,
-		SessionID: session,
-		TurnID:   turnID,
-		Level:    "info",
-		Type:     entryType,
-		Content:  content,
 	}
 }
 
