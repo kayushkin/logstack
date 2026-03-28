@@ -103,8 +103,8 @@ func setupNATS(nc *bus.Client, s store.Store) {
 		log.Printf("NATS: subscribed to logs.>")
 	}
 
-	// Subscribe to chat.inbound for user messages (all orchestrators)
-	_, err = nc.Subscribe("chat.inbound", func(subject string, data []byte) {
+	// Subscribe to chat.inbound.* for user messages (all orchestrators via wildcard)
+	_, err = nc.Subscribe("chat.inbound.*", func(subject string, data []byte) {
 		var msg struct {
 			Text         string `json:"text"`
 			Author       string `json:"author"`
