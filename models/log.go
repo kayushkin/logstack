@@ -47,6 +47,10 @@ type LogEntry struct {
 	// Latency in milliseconds (deprecated — use Stats.DurationMs)
 	LatencyMs int64 `json:"latency_ms,omitempty"`
 
+	// Hidden entries are still logged but should not be displayed in frontends.
+	// Set by the adapter for system messages, heartbeat acks, NO_REPLY, etc.
+	Hidden bool `json:"hidden,omitempty"`
+
 	// Error message (if level is error)
 	Error string `json:"error,omitempty"`
 
