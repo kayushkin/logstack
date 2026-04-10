@@ -426,7 +426,7 @@ func (s *FileStore) MaxUsage(from, to time.Time) (*models.MaxUsageResponse, erro
 			inputTokens = entry.Stats.InputTokens
 			outputTokens = entry.Stats.OutputTokens
 			cacheReadTokens = entry.Stats.CacheReadTokens
-			cacheWriteTokens = entry.Stats.CacheCreationTokens
+			cacheWriteTokens = entry.Stats.CacheCreationTokens + entry.Stats.CacheWriteTokens
 			model = entry.Stats.Model
 		} else {
 			// Legacy: parse content for meta
@@ -760,9 +760,9 @@ func (s *FileStore) getDirsToScan(params models.QueryParams) []string {
 			}
 		}
 	} else {
-		// Scan recent directories (last 7 days)
+		// Scan recent directories (last 30 days)
 		now := time.Now()
-		for i := 0; i < 7; i++ {
+		for i := 0; i < 30; i++ {
 			date := now.AddDate(0, 0, -i)
 			dir := filepath.Join(s.baseDir, date.Format("2006-01-02"))
 			if _, err := os.Stat(dir); err == nil {
