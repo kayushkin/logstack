@@ -111,6 +111,7 @@ func setupNATS(nc *bus.Client, s store.Store) {
 			Agent        string `json:"agent"`
 			Orchestrator string `json:"orchestrator"`
 			Channel      string `json:"channel"`
+			SessionID    string `json:"session_id"`
 		}
 		if err := json.Unmarshal(data, &msg); err != nil {
 			log.Printf("NATS: failed to unmarshal chat.inbound: %v", err)
@@ -127,13 +128,17 @@ func setupNATS(nc *bus.Client, s store.Store) {
 		if author == "" {
 			author = "user"
 		}
+		sessionID := msg.SessionID
+		if sessionID == "" {
+			sessionID = "main"
+		}
 		entry := &models.LogEntry{
 			ID:           uuid.New().String(),
 			Timestamp:    time.Now(),
 			Agent:        msg.Agent,
 			Orchestrator: msg.Orchestrator,
 			Channel:      msg.Channel,
-			SessionID:    "main",
+			SessionID:    sessionID,
 			Level:        "info",
 			Type:         "inbound",
 			Content: map[string]interface{}{
