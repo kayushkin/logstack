@@ -86,8 +86,8 @@ func (c *Client) Query(params models.QueryParams) ([]models.LogEntry, error) {
 	}
 
 	q := req.URL.Query()
-	if params.Source != "" {
-		q.Add("source", params.Source)
+	if params.Orchestrator != "" {
+		q.Add("orchestrator", params.Orchestrator)
 	}
 	if params.Agent != "" {
 		q.Add("agent", params.Agent)
@@ -175,8 +175,8 @@ func (c *Client) Stats(params models.QueryParams) (*models.Stats, error) {
 	}
 
 	q := req.URL.Query()
-	if params.Source != "" {
-		q.Add("source", params.Source)
+	if params.Orchestrator != "" {
+		q.Add("orchestrator", params.Orchestrator)
 	}
 	if !params.From.IsZero() {
 		q.Add("from", params.From.Format(time.RFC3339))
@@ -214,8 +214,8 @@ func (c *Client) Group(params models.QueryParams, groupBy string) ([]models.Grou
 	}
 
 	q := req.URL.Query()
-	if params.Source != "" {
-		q.Add("source", params.Source)
+	if params.Orchestrator != "" {
+		q.Add("orchestrator", params.Orchestrator)
 	}
 	if !params.From.IsZero() {
 		q.Add("from", params.From.Format(time.RFC3339))
