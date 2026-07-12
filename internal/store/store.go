@@ -47,7 +47,19 @@ type Store interface {
 // FileStore implements Store using JSONL files
 type FileStore struct {
 	baseDir string
-	mu      sync.RWMutex
+
+	// mu guards index, and nothing else. The scan paths (Query, Usage,
+	// MaxUsage, RateLimits) read only baseDir — which is immutable after
+	// construction — and the filesystem, so they must NOT take it.
+	//
+	// This is load-bearing, not a style note. Query used to hold mu.RLock
+	// for the whole of an unscoped 30-day, ~90MB disk scan. An ingest Write
+	// would then block on Lock(), and because Go's RWMutex stops admitting
+	// new readers once a writer is waiting, every subsequent read and write
+	// parked behind it: one anonymous GET /logs/group/<field> stalled the
+	// entire log sink for ~2 minutes while /health kept cheerfully
+	// answering 200. See TestQueryDoesNotTakeTheIndexLock.
+	mu sync.RWMutex
 
 	// Index for faster lookups (simple in-memory index)
 	index map[string]string // id -> file path
@@ -121,11 +133,11 @@ func (s *FileStore) Write(entry *models.LogEntry) error {
 	return nil
 }
 
-// Query searches for logs matching the given parameters
+// Query searches for logs matching the given parameters.
+//
+// Deliberately takes no lock: it reads the filesystem and the immutable
+// baseDir, never index. Holding mu here starved ingest — see the mu comment.
 func (s *FileStore) Query(params models.QueryParams) ([]models.LogEntry, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	var results []models.LogEntry
 
 	// Determine which directories to scan
