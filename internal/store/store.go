@@ -861,6 +861,26 @@ func matchesParams(entry *models.LogEntry, params models.QueryParams) bool {
 	return true
 }
 
+// GroupFields lists the fields Group can group by. It is the single source of
+// truth for callers that need to validate a requested group field: every entry
+// here must have a case in getGroupKey, or grouping silently collapses every
+// log into one "unknown" bucket. GroupFieldsAreHandled pins that.
+var GroupFields = []string{
+	"orchestrator", "agent", "channel",
+	"model", "level", "type",
+	"session", "hour", "day",
+}
+
+// IsGroupField reports whether groupBy is a field Group understands.
+func IsGroupField(groupBy string) bool {
+	for _, f := range GroupFields {
+		if f == groupBy {
+			return true
+		}
+	}
+	return false
+}
+
 func getGroupKey(entry *models.LogEntry, groupBy string) string {
 	switch groupBy {
 	case "orchestrator":

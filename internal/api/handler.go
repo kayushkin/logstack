@@ -132,17 +132,10 @@ func (h *Handler) GetLog(c *gin.Context) {
 func (h *Handler) GroupLogs(c *gin.Context) {
 	groupBy := c.Param("field")
 
-	// Valid group fields
-	validFields := map[string]bool{
-		"source": true, "agent": true, "channel": true,
-		"model": true, "level": true, "type": true,
-		"session": true, "hour": true, "day": true,
-	}
-
-	if !validFields[groupBy] {
+	if !store.IsGroupField(groupBy) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "invalid group field",
-			"valid": []string{"source", "agent", "channel", "model", "level", "type", "session", "hour", "day"},
+			"valid": store.GroupFields,
 		})
 		return
 	}

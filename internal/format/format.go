@@ -42,9 +42,9 @@ func (f *Formatter) Text(entry *models.LogEntry) string {
 	// Timestamp and level
 	sb.WriteString(fmt.Sprintf("[%s] %s ", entry.Timestamp.Format("2006-01-02 15:04:05"), strings.ToUpper(entry.Level)))
 
-	// Source and agent
-	if entry.Source != "" {
-		sb.WriteString(fmt.Sprintf("%s", entry.Source))
+	// Orchestrator and agent
+	if entry.Orchestrator != "" {
+		sb.WriteString(fmt.Sprintf("%s", entry.Orchestrator))
 		if entry.Agent != "" {
 			sb.WriteString(fmt.Sprintf("/%s", entry.Agent))
 		}
@@ -116,7 +116,7 @@ func (f *Formatter) Summary(entry *models.LogEntry) string {
 
 	return fmt.Sprintf("%s | %s | %s | %s",
 		entry.Timestamp.Format("15:04:05"),
-		entry.Source,
+		entry.Orchestrator,
 		entry.Type,
 		content,
 	)
@@ -132,7 +132,7 @@ func (f *Formatter) Table(entries []models.LogEntry) string {
 
 	// Header
 	sb.WriteString(fmt.Sprintf("%-20s %-10s %-15s %-10s %s\n",
-		"TIMESTAMP", "LEVEL", "SOURCE", "TYPE", "CONTENT"))
+		"TIMESTAMP", "LEVEL", "ORCHESTRATOR", "TYPE", "CONTENT"))
 	sb.WriteString(strings.Repeat("-", 100) + "\n")
 
 	// Rows
@@ -150,7 +150,7 @@ func (f *Formatter) Table(entries []models.LogEntry) string {
 		sb.WriteString(fmt.Sprintf("%-20s %-10s %-15s %-10s %s\n",
 			entry.Timestamp.Format("2006-01-02 15:04:05"),
 			entry.Level,
-			entry.Source,
+			entry.Orchestrator,
 			entry.Type,
 			content,
 		))
@@ -166,8 +166,8 @@ func (f *Formatter) Logfmt(entry *models.LogEntry) string {
 	pairs = append(pairs, fmt.Sprintf("ts=%s", entry.Timestamp.Format(time.RFC3339)))
 	pairs = append(pairs, fmt.Sprintf("level=%s", entry.Level))
 
-	if entry.Source != "" {
-		pairs = append(pairs, fmt.Sprintf("source=%s", entry.Source))
+	if entry.Orchestrator != "" {
+		pairs = append(pairs, fmt.Sprintf("orchestrator=%s", entry.Orchestrator))
 	}
 	if entry.Agent != "" {
 		pairs = append(pairs, fmt.Sprintf("agent=%s", entry.Agent))
