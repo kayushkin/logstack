@@ -47,13 +47,34 @@ else
   exit 1
 fi
 
+# Wait for the port, don't guess at it. logstack rebuilds its in-memory id index
+# by parsing every line of every .jsonl under LOGSTACK_DATA_DIR before it binds --
+# 221MB and ~4-5s here, and it grows with the corpus. The old `sleep 2` + one curl
+# raced that: the socket was not open yet, curl got connection refused (instantly,
+# so --max-time never even applied), and deploy.sh exited 1 having already
+# installed and started a perfectly good binary. It reported every deploy as
+# broken, which is indistinguishable from reporting none of them.
+echo "==> Waiting for :$PORT to accept connections..."
+READY_TIMEOUT=60
+for i in $(seq 1 "$READY_TIMEOUT"); do
+  if curl -fsS --max-time 5 "http://localhost:$PORT/api/v1/health" >/dev/null 2>&1; then
+    echo "    health OK (ready after ${i}s)"
+    break
+  fi
+  if ! systemctl --user is-active --quiet "$SERVICE"; then
+    echo "ERROR: $SERVICE died while starting up"
+    journalctl --user -u "$SERVICE" -n 30 --no-pager 2>&1
+    exit 1
+  fi
+  if [ "$i" -eq "$READY_TIMEOUT" ]; then
+    echo "ERROR: $SERVICE still not answering :$PORT/api/v1/health after ${READY_TIMEOUT}s"
+    journalctl --user -u "$SERVICE" -n 30 --no-pager 2>&1
+    exit 1
+  fi
+  sleep 1
+done
+
 echo "==> Smoke test..."
-if ! curl -fsS --max-time 10 "http://localhost:$PORT/api/v1/health" >/dev/null 2>&1; then
-  echo "ERROR: $SERVICE not responding on :$PORT/api/v1/health"
-  journalctl --user -u "$SERVICE" -n 30 --no-pager 2>&1
-  exit 1
-fi
-echo "    health OK"
 
 # The group-by field list is served from store.GroupFields. A binary built before
 # the Source -> Orchestrator rename landed answers 400 here and 200 on
