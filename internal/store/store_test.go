@@ -185,3 +185,76 @@ func TestIsGroupFieldRejectsUnknownFields(t *testing.T) {
 		}
 	}
 }
+
+// sortByTimestamp must order newest-first, and must leave entries that share a
+// timestamp in the order they were read. Query slices Offset/Limit off the sorted
+// result, so an undefined order among ties means paging can skip or repeat a row.
+func TestSortByTimestampOrdersNewestFirstAndKeepsTiesStable(t *testing.T) {
+	base := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+
+	entries := []models.LogEntry{
+		{ID: "oldest", Timestamp: base},
+		{ID: "tie-a", Timestamp: base.Add(time.Hour)},
+		{ID: "newest", Timestamp: base.Add(2 * time.Hour)},
+		{ID: "tie-b", Timestamp: base.Add(time.Hour)},
+	}
+
+	sortByTimestamp(entries)
+
+	got := []string{}
+	for _, e := range entries {
+		got = append(got, e.ID)
+	}
+	want := []string{"newest", "tie-a", "tie-b", "oldest"}
+
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("sortByTimestamp = %v, want %v (newest first; tie-a before tie-b since it was read first)", got, want)
+		}
+	}
+}
+
+// The 2026-07-12 finding, pinned: an unscoped query must not cost quadratic time.
+//
+// sortByTimestamp used to be a hand-rolled selection sort, and Query runs it over
+// every entry it materialised. The live 30-day window holds ~196k entries, so that
+// was ~1.9e10 comparisons — a measured ~118s of CPU on a request that spends only
+// ~2s reading all 88MB off disk. A bare GET /logs/group/<field> therefore burned
+// two minutes of CPU, and kayushkin.com proxies that endpoint straight through.
+//
+// This asserts with time, which is usually a flaky way to pin a property — but the
+// margin here is three orders of magnitude, not a factor of two. An O(n log n) sort
+// of this many entries takes tens of milliseconds; the selection sort it replaced
+// cannot physically finish in under a minute. Nothing lands in between, so no amount
+// of load on the box makes this test ambiguous.
+func TestSortByTimestampIsNotQuadratic(t *testing.T) {
+	if testing.Short() {
+		t.Skip("allocates a full 30-day window of entries")
+	}
+
+	const entryCount = 200_000 // ~ the live 30-day window
+	const budget = 15 * time.Second
+
+	// Reverse-sorted input: the worst case for the old sort, and it forces a real
+	// permutation rather than letting an already-ordered slice off cheap.
+	base := time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC)
+	entries := make([]models.LogEntry, entryCount)
+	for i := range entries {
+		entries[i] = models.LogEntry{Timestamp: base.Add(time.Duration(i) * time.Millisecond)}
+	}
+
+	start := time.Now()
+	sortByTimestamp(entries)
+	elapsed := time.Since(start)
+
+	if elapsed > budget {
+		t.Fatalf("sorting %d entries took %v (budget %v) — sortByTimestamp is quadratic again; "+
+			"an unscoped Query now burns minutes of CPU", entryCount, elapsed.Round(time.Millisecond), budget)
+	}
+
+	for i := 1; i < len(entries); i++ {
+		if entries[i-1].Timestamp.Before(entries[i].Timestamp) {
+			t.Fatalf("entry %d is older than entry %d: not sorted newest-first", i-1, i)
+		}
+	}
+}

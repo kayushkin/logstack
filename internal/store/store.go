@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -588,15 +589,15 @@ func (s *FileStore) MaxUsage(from, to time.Time) (*models.MaxUsageResponse, erro
 	return response, nil
 }
 
-// sortByDay sorts the by_day slice by date
+// sortByDay sorts the by_day slice oldest-first by date.
+//
+// Same hand-rolled O(n^2) shape as sortByTimestamp was; n is only the number of
+// days in the billing period, so this one was never a real cost — but it is the
+// same defect, and leaving it would invite the next person to copy it.
 func sortByDay(days []models.MaxUsageByDay) {
-	for i := 0; i < len(days)-1; i++ {
-		for j := i + 1; j < len(days); j++ {
-			if days[i].Date > days[j].Date {
-				days[i], days[j] = days[j], days[i]
-			}
-		}
-	}
+	sort.Slice(days, func(i, j int) bool {
+		return days[i].Date < days[j].Date
+	})
 }
 
 // RateLimits returns recent 429 error events
@@ -918,13 +919,20 @@ func getGroupKey(entry *models.LogEntry, groupBy string) string {
 	}
 }
 
+// sortByTimestamp orders entries newest-first.
+//
+// This was a hand-rolled O(n^2) selection sort ("optimize later if needed", and
+// nobody did) from logstack's first commit until 2026-07-12, and it was the whole
+// reason an unscoped query took two minutes. Query sorts every entry it
+// materialised, and the default 30-day window holds ~196k of them: ~1.9e10
+// comparisons, ~118s of pure CPU. Reading and parsing all 88MB off disk takes
+// ~2s. The scan was never the expensive part.
+//
+// sort.SliceStable, not sort.Slice: Query applies Offset/Limit *after* sorting, so
+// entries sharing a timestamp need a defined order or paging through them could
+// skip or repeat rows. The old sort left ties in an arbitrary order.
 func sortByTimestamp(entries []models.LogEntry) {
-	// Simple bubble sort for now (optimize later if needed)
-	for i := 0; i < len(entries)-1; i++ {
-		for j := i + 1; j < len(entries); j++ {
-			if entries[i].Timestamp.Before(entries[j].Timestamp) {
-				entries[i], entries[j] = entries[j], entries[i]
-			}
-		}
-	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].Timestamp.After(entries[j].Timestamp)
+	})
 }

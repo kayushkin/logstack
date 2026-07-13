@@ -59,7 +59,16 @@ echo "    health OK"
 # the Source -> Orchestrator rename landed answers 400 here and 200 on
 # /group/source (bucketing every log under "unknown"), so this pins the deployed
 # binary to the fixed one rather than just to "a binary that starts".
-if ! curl -fsS --max-time 10 "http://localhost:$PORT/api/v1/logs/group/orchestrator?limit=1" >/dev/null 2>&1; then
+#
+# Scoped to today deliberately. This probe used to be `?limit=1`, which reads as
+# cheap and is not: limit is applied after the scan, so it still swept the default
+# 30-day window -- ~2 minutes, well past --max-time 10. The smoke test could
+# therefore never pass, and deploy.sh exited 1 on a perfectly good deploy, after
+# it had already installed and started the binary. `from=` is the bound that
+# actually bounds (0.003s), and it costs the probe nothing: a pre-rename binary
+# still answers 400 here whatever the window.
+SMOKE_FROM="$(date -u +%Y-%m-%dT00:00:00Z)"
+if ! curl -fsS --max-time 10 "http://localhost:$PORT/api/v1/logs/group/orchestrator?from=$SMOKE_FROM" >/dev/null 2>&1; then
   echo "ERROR: /logs/group/orchestrator rejected - deployed binary predates the Orchestrator rename"
   exit 1
 fi
