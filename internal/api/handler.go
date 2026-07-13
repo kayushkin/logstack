@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -18,6 +20,37 @@ type Handler struct {
 // NewHandler creates a new API handler
 func NewHandler(s store.Store) *Handler {
 	return &Handler{store: s}
+}
+
+// streamJSON writes obj to the response as it encodes it.
+//
+// Use it for the responses that carry log rows; c.JSON is fine for the small
+// fixed-shape ones. gin's c.JSON marshals the ENTIRE response into one []byte
+// before writing a single byte of it, and json.Marshal grows that buffer by
+// doubling and then copies it — so serialising the 30-day group response cost
+// ~173MB of transient heap on top of the ~90MB of entries it was serialising, to
+// send a body the client streams anyway. Measured on the live corpus; it was a
+// quarter of the 710MB peak.
+//
+// Encoding straight into the ResponseWriter also means a client that gives up
+// mid-download stops the work, instead of the server building all 90MB first and
+// discovering nobody is listening.
+//
+// The bytes are identical to c.JSON's apart from encoding/json's trailing
+// newline, which JSON treats as insignificant whitespace.
+func streamJSON(c *gin.Context, status int, obj any) {
+	c.Header("Content-Type", "application/json; charset=utf-8")
+	c.Status(status)
+
+	// The status line is already committed, so a mid-stream failure cannot become
+	// a clean 500 — the client sees a truncated body and a broken parse either
+	// way. It must not pass silently, though: log it. In practice Content is
+	// whatever json.Unmarshal produced on the way in, so it always re-marshals;
+	// the realistic error here is the client hanging up.
+	if err := json.NewEncoder(c.Writer).Encode(obj); err != nil {
+		log.Printf("stream json response: %v", err)
+		c.Error(err) //nolint:errcheck // recorded on the context for gin's logger
+	}
 }
 
 // SetupRoutes configures all API routes
@@ -109,7 +142,7 @@ func (h *Handler) QueryLogs(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	streamJSON(c, http.StatusOK, gin.H{
 		"logs":  logs,
 		"count": len(logs),
 	})
@@ -152,7 +185,7 @@ func (h *Handler) GroupLogs(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	streamJSON(c, http.StatusOK, gin.H{
 		"group_by": groupBy,
 		"groups":   groups,
 		"count":    len(groups),

@@ -2,8 +2,11 @@ package store
 
 import (
 	"bufio"
+	"container/heap"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -138,26 +141,55 @@ func (s *FileStore) Write(entry *models.LogEntry) error {
 //
 // Deliberately takes no lock: it reads the filesystem and the immutable
 // baseDir, never index. Holding mu here starved ingest — see the mu comment.
+//
+// A bounded query never materialises the corpus. Query used to parse every
+// entry in the window into one slice, sort all of them, and only then slice off
+// Offset/Limit — so the default `GET /logs` (Limit=100, no window) parsed
+// ~192k entries, allocated ~300MB, and threw 192,090 of them away to return a
+// hundred. The work a request does was set by how much history happened to be on
+// disk rather than by what the request asked for. selectEntries keeps only the
+// Offset+Limit entries that can still survive that slicing, so peak memory is
+// now set by the caller's own bound.
+//
+// The unbounded path (Limit == 0, which is what Group and Stats use) is
+// unchanged and still holds everything: it has to, because it returns
+// everything.
 func (s *FileStore) Query(params models.QueryParams) ([]models.LogEntry, error) {
-	var results []models.LogEntry
+	// Only the newest Offset+Limit entries can outlive the slicing below.
+	keep := 0
+	if params.Limit > 0 {
+		keep = params.Offset + params.Limit
+		if keep < 0 { // overflowed; treat an absurd offset as unbounded
+			keep = 0
+		}
+	}
+	selector := newEntrySelector(keep)
 
 	// Determine which directories to scan
 	dirs := s.getDirsToScan(params)
 
 	for _, dir := range dirs {
-		entries, err := s.scanDir(dir, params)
-		if err != nil {
+		if err := s.scanDir(dir, params, selector.offer); err != nil {
 			return nil, err
 		}
-		results = append(results, entries...)
 	}
 
-	// Sort by timestamp (newest first)
-	sortByTimestamp(results)
+	// Newest first, ties in scan order — see sortByTimestamp.
+	results := selector.sorted()
 
-	// Apply offset and limit
-	if params.Offset > 0 && params.Offset < len(results) {
-		results = results[params.Offset:]
+	// Apply offset and limit.
+	//
+	// An offset past the end must yield nothing. It used to yield the FIRST page:
+	// the guard was `Offset < len(results)`, so asking for page 9999 of a 3-page
+	// result silently skipped the offset entirely and re-served page 1 — a
+	// paginating client would loop over the same rows forever instead of
+	// terminating. TestOffsetPastTheEndReturnsNothing pins it.
+	if params.Offset > 0 {
+		if params.Offset >= len(results) {
+			results = nil
+		} else {
+			results = results[params.Offset:]
+		}
 	}
 	if params.Limit > 0 && params.Limit < len(results) {
 		results = results[:params.Limit]
@@ -173,14 +205,28 @@ func (s *FileStore) Group(params models.QueryParams, groupBy string) ([]models.G
 		return nil, err
 	}
 
-	groups := make(map[string][]models.LogEntry)
-
-	for _, entry := range entries {
-		key := getGroupKey(&entry, groupBy)
-		groups[key] = append(groups[key], entry)
+	// Size every bucket before filling any, so each one is allocated exactly once.
+	//
+	// Appending into a map of slices grew each bucket by doubling, and the biggest
+	// bucket here holds ~143k entries: every doubling abandons the previous array,
+	// so grouping the 30-day window churned ~136MB of garbage to produce ~48MB of
+	// buckets. Counting first costs one extra pass over a slice already in memory.
+	keys := make([]string, len(entries))
+	counts := make(map[string]int, len(GroupFields))
+	for i := range entries {
+		keys[i] = getGroupKey(&entries[i], groupBy)
+		counts[keys[i]]++
 	}
 
-	var results []models.GroupedLogs
+	groups := make(map[string][]models.LogEntry, len(counts))
+	for key, n := range counts {
+		groups[key] = make([]models.LogEntry, 0, n)
+	}
+	for i := range entries {
+		groups[keys[i]] = append(groups[keys[i]], entries[i])
+	}
+
+	results := make([]models.GroupedLogs, 0, len(groups))
 	for key, logs := range groups {
 		results = append(results, models.GroupedLogs{
 			GroupKey: key,
@@ -188,6 +234,16 @@ func (s *FileStore) Group(params models.QueryParams, groupBy string) ([]models.G
 			Logs:     logs,
 		})
 	}
+
+	// Range over a map is randomised, so the group list came back in a different
+	// order on every call — the same response reshuffling under an operator who
+	// changed nothing. Biggest bucket first, ties by key.
+	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].Count != results[j].Count {
+			return results[i].Count > results[j].Count
+		}
+		return results[i].GroupKey < results[j].GroupKey
+	})
 
 	return results, nil
 }
@@ -787,12 +843,15 @@ func (s *FileStore) getDirsToScan(params models.QueryParams) []string {
 	return dirs
 }
 
-func (s *FileStore) scanDir(dir string, params models.QueryParams) ([]models.LogEntry, error) {
-	var entries []models.LogEntry
-
+// scanDir passes every entry in dir matching params to visit.
+//
+// It streams rather than returning a slice so that a bounded Query never holds a
+// whole day's logs at once: the selector on the other end of visit drops what it
+// cannot use as each line is parsed.
+func (s *FileStore) scanDir(dir string, params models.QueryParams, visit func(models.LogEntry)) error {
 	files, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Filter by orchestrator if specified
@@ -802,22 +861,26 @@ func (s *FileStore) scanDir(dir string, params models.QueryParams) ([]models.Log
 	}
 
 	for _, file := range files {
-		ents, err := s.scanFile(file, params)
-		if err != nil {
-			continue
+		if err := s.scanFile(file, params, visit); err != nil {
+			// A file that isn't there is not an error: the orchestrator filter above
+			// names one by convention without checking it exists. Anything else —
+			// notably a truncated read — is, and must not be swallowed, or the
+			// silent-truncation guard in scanFile guards nothing.
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return err
 		}
-		entries = append(entries, ents...)
 	}
 
-	return entries, nil
+	return nil
 }
 
-func (s *FileStore) scanFile(path string, params models.QueryParams) ([]models.LogEntry, error) {
-	var entries []models.LogEntry
-
+// scanFile passes every entry in path matching params to visit.
+func (s *FileStore) scanFile(path string, params models.QueryParams, visit func(models.LogEntry)) error {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer f.Close()
 
@@ -834,10 +897,23 @@ func (s *FileStore) scanFile(path string, params models.QueryParams) ([]models.L
 			continue
 		}
 
-		entries = append(entries, entry)
+		visit(entry)
 	}
 
-	return entries, nil
+	// A line longer than the buffer above stops the scan and is otherwise
+	// INDISTINGUISHABLE FROM EOF: bufio.Scanner just stops returning tokens. Left
+	// unchecked, one oversized line silently hides every log written after it in
+	// that file, and the query reports the truncated result as a complete one.
+	// (No line in the live corpus is anywhere near the cap today — the longest is
+	// ~36KB — which is exactly why this would go unnoticed if it ever changed.)
+	//
+	// A malformed line is different, and still skipped above: that is one unusable
+	// record, not a truncated file.
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("scan %s: %w", path, err)
+	}
+
+	return nil
 }
 
 func matchesParams(entry *models.LogEntry, params models.QueryParams) bool {
@@ -935,4 +1011,112 @@ func sortByTimestamp(entries []models.LogEntry) {
 	sort.SliceStable(entries, func(i, j int) bool {
 		return entries[i].Timestamp.After(entries[j].Timestamp)
 	})
+}
+
+// entrySelector collects the entries a Query will return.
+//
+// It exists to make a bounded query cost what it asked for. Its whole contract is
+// that it produces EXACTLY what "materialise everything, sortByTimestamp, then
+// slice" produced, while holding at most `keep` entries at a time — so the tie
+// handling has to match sortByTimestamp's, not merely resemble it.
+//
+// sortByTimestamp is a *stable* descending sort, so the total order it defines is
+// (timestamp descending, then scan order ascending): among entries sharing a
+// timestamp, the one parsed first wins. seq records that scan order, and it is
+// what lets a heap reproduce a stable sort's top-K. Without it, entries sharing a
+// timestamp would be kept or dropped arbitrarily at the boundary, and paging
+// through them could skip or repeat rows — the exact hazard sortByTimestamp's own
+// comment says it uses SliceStable to avoid.
+type entrySelector struct {
+	keep int   // 0 = unbounded: keep everything
+	seq  int64 // entries offered so far; also each entry's scan position
+	all  []models.LogEntry
+	best rankedEntryHeap
+}
+
+// rankedEntry is an entry plus the position it was scanned at.
+type rankedEntry struct {
+	entry models.LogEntry
+	seq   int64
+}
+
+func newEntrySelector(keep int) *entrySelector {
+	// Deliberately no preallocation to `keep`: MaxUsage passes Limit=500000 as
+	// "no practical limit", and reserving half a million entries up front would
+	// cost more than the scan it is meant to bound.
+	return &entrySelector{keep: keep}
+}
+
+// offer presents one matching entry to the selector, which keeps it or drops it.
+func (s *entrySelector) offer(entry models.LogEntry) {
+	seq := s.seq
+	s.seq++
+
+	if s.keep == 0 {
+		s.all = append(s.all, entry)
+		return
+	}
+
+	if len(s.best) < s.keep {
+		heap.Push(&s.best, rankedEntry{entry: entry, seq: seq})
+		return
+	}
+
+	// s.best[0] is the weakest entry kept so far. Note an entry can never displace
+	// one with the same timestamp: seq only grows, and the earlier scan position
+	// wins ties, which is precisely what the stable sort would have done.
+	if beatsRankedEntry(entry, seq, s.best[0]) {
+		s.best[0] = rankedEntry{entry: entry, seq: seq}
+		heap.Fix(&s.best, 0)
+	}
+}
+
+// sorted returns the kept entries newest-first, ties in scan order.
+func (s *entrySelector) sorted() []models.LogEntry {
+	if s.keep == 0 {
+		sortByTimestamp(s.all)
+		return s.all
+	}
+
+	sort.Slice(s.best, func(i, j int) bool {
+		return beatsRankedEntry(s.best[i].entry, s.best[i].seq, s.best[j])
+	})
+
+	results := make([]models.LogEntry, len(s.best))
+	for i, ranked := range s.best {
+		results[i] = ranked.entry
+	}
+	return results
+}
+
+// beatsRankedEntry reports whether an entry scanned at seq outranks other under
+// the order sortByTimestamp defines: newer timestamp first, ties to whichever was
+// scanned first.
+func beatsRankedEntry(entry models.LogEntry, seq int64, other rankedEntry) bool {
+	if !entry.Timestamp.Equal(other.entry.Timestamp) {
+		return entry.Timestamp.After(other.entry.Timestamp)
+	}
+	return seq < other.seq
+}
+
+// rankedEntryHeap is a min-heap whose root is the entry closest to being dropped:
+// the oldest, and among equal timestamps the one scanned last.
+type rankedEntryHeap []rankedEntry
+
+func (h rankedEntryHeap) Len() int { return len(h) }
+
+func (h rankedEntryHeap) Less(i, j int) bool {
+	return beatsRankedEntry(h[j].entry, h[j].seq, h[i])
+}
+
+func (h rankedEntryHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+
+func (h *rankedEntryHeap) Push(x any) { *h = append(*h, x.(rankedEntry)) }
+
+func (h *rankedEntryHeap) Pop() any {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	*h = old[:n-1]
+	return item
 }

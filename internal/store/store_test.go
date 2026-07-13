@@ -1,7 +1,12 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -255,6 +260,269 @@ func TestSortByTimestampIsNotQuadratic(t *testing.T) {
 	for i := 1; i < len(entries); i++ {
 		if entries[i-1].Timestamp.Before(entries[i].Timestamp) {
 			t.Fatalf("entry %d is older than entry %d: not sorted newest-first", i-1, i)
+		}
+	}
+}
+
+// seedCorpus writes n entries across a few day-dirs and returns a store over them.
+// Every 7th entry shares a timestamp with its predecessor, so the tie handling the
+// bounded selector has to reproduce is actually exercised.
+func seedCorpus(t *testing.T, n int) *FileStore {
+	t.Helper()
+
+	dir := t.TempDir()
+	store, err := NewFileStore(dir)
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+
+	base := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	ts := base
+	for i := 0; i < n; i++ {
+		if i%7 != 0 {
+			ts = base.Add(time.Duration(i) * time.Second)
+		} // else: reuse the previous timestamp, creating a tie
+		entry := &models.LogEntry{
+			ID:           fmt.Sprintf("entry-%06d", i),
+			Timestamp:    ts,
+			Orchestrator: []string{"scheduler", "openclaw", "inber", "si", "nightly-worker"}[i%5],
+			Level:        []string{"info", "error"}[i%2],
+			Type:         "outbound",
+			Content:      map[string]any{"text": fmt.Sprintf("body of entry %d", i)},
+		}
+		if err := store.Write(entry); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+	}
+	return store
+}
+
+// referenceQuery is what Query did before it learned to bound itself: materialise
+// every match, stable-sort it, then slice. It is the definition the bounded path
+// must reproduce exactly.
+func referenceQuery(t *testing.T, s *FileStore, params models.QueryParams) []models.LogEntry {
+	t.Helper()
+
+	var all []models.LogEntry
+	for _, dir := range s.getDirsToScan(params) {
+		if err := s.scanDir(dir, params, func(e models.LogEntry) { all = append(all, e) }); err != nil {
+			t.Fatalf("scanDir: %v", err)
+		}
+	}
+	sortByTimestamp(all)
+
+	if params.Offset > 0 {
+		if params.Offset >= len(all) {
+			return nil
+		}
+		all = all[params.Offset:]
+	}
+	if params.Limit > 0 && params.Limit < len(all) {
+		all = all[:params.Limit]
+	}
+	return all
+}
+
+// A bounded query must return EXACTLY the rows that sorting the whole window and
+// slicing would have returned — same rows, same order, including across ties.
+//
+// This is the contract that lets Query drop entries during the scan instead of
+// materialising ~192k of them to hand back 100. Getting the tie-break wrong would
+// not fail loudly; it would quietly reorder rows that share a timestamp, and a
+// client paging through them would skip or repeat one. Every 7th seeded entry is
+// a deliberate tie for that reason.
+func TestBoundedQueryMatchesSortingEverything(t *testing.T) {
+	store := seedCorpus(t, 5000)
+
+	cases := []models.QueryParams{
+		{Limit: 1},
+		{Limit: 100},
+		{Limit: 100, Offset: 50},
+		{Limit: 3, Offset: 2},
+		{Limit: 250, Offset: 1000},
+		{Limit: 4999},
+		{Limit: 5000},
+		{Limit: 6000},                          // limit past the end
+		{Limit: 10, Orchestrator: "scheduler"}, // filtered
+		{Limit: 10, Level: "error", Offset: 3}, // filtered + offset
+		{Limit: 100000},                        // the "no practical limit" shape Usage uses
+	}
+
+	for _, params := range cases {
+		want := referenceQuery(t, store, params)
+
+		got, err := store.Query(params)
+		if err != nil {
+			t.Fatalf("Query(%+v): %v", params, err)
+		}
+
+		if len(got) != len(want) {
+			t.Fatalf("Query(%+v) returned %d entries, sorting everything returns %d", params, len(got), len(want))
+		}
+		for i := range want {
+			if got[i].ID != want[i].ID {
+				t.Fatalf("Query(%+v) row %d = %s, want %s (bounded selection diverged from the stable sort)",
+					params, i, got[i].ID, want[i].ID)
+			}
+		}
+	}
+}
+
+// The point of the bounded path: a bounded query must not retain the corpus.
+//
+// Query used to parse every entry in the window into one slice and sort all of it
+// before slicing off Offset/Limit, so the DEFAULT `GET /logs` (Limit=100, no
+// window) held ~192k live entries — ~300MB measured on the live corpus — to
+// return a hundred rows. The cost of a request was set by how much history was on
+// disk, not by what the request asked for, and logstack is proxied anonymously.
+//
+// Asserts on live heap after a forced GC, which measures retention rather than
+// churn — that is the property, and it is what regresses if anyone reinstates the
+// materialise-everything path. The ratio is deliberately generous (the true
+// difference is ~500x here); nothing legitimate lands near it.
+func TestBoundedQueryDoesNotRetainTheCorpus(t *testing.T) {
+	if testing.Short() {
+		t.Skip("seeds a corpus large enough to measure retention")
+	}
+
+	store := seedCorpus(t, 40_000)
+
+	liveHeapOf := func(params models.QueryParams) uint64 {
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+
+		got, err := store.Query(params)
+		if err != nil {
+			t.Fatalf("Query: %v", err)
+		}
+
+		runtime.GC()
+		runtime.ReadMemStats(&after)
+		runtime.KeepAlive(got) // the result must still be live when we measure
+
+		if after.HeapAlloc < before.HeapAlloc {
+			return 0
+		}
+		return after.HeapAlloc - before.HeapAlloc
+	}
+
+	bounded := liveHeapOf(models.QueryParams{Limit: 100})
+	unbounded := liveHeapOf(models.QueryParams{})
+
+	if bounded > unbounded/8 {
+		t.Fatalf("Query(limit=100) retained %d bytes; the unbounded query over the same corpus retained %d. "+
+			"A bounded query is materialising the whole window again.", bounded, unbounded)
+	}
+}
+
+// Asking for a page past the end must return nothing, not the first page.
+//
+// The guard used to be `Offset > 0 && Offset < len(results)`, so an offset beyond
+// the result count skipped the slicing entirely and re-served row 0 onwards. A
+// client paging until it saw an empty page would never see one: it would loop over
+// page 1 forever.
+func TestOffsetPastTheEndReturnsNothing(t *testing.T) {
+	store := seedCorpus(t, 50)
+
+	got, err := store.Query(models.QueryParams{Limit: 10, Offset: 999})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+
+	if len(got) != 0 {
+		t.Fatalf("Query(offset=999) over 50 entries returned %d rows (first is %s); an offset past the end must return none",
+			len(got), got[0].ID)
+	}
+}
+
+// A line too long for the scan buffer must fail the query, not truncate it.
+//
+// bufio.Scanner stops returning tokens when a line exceeds its buffer, and that is
+// indistinguishable from EOF unless Err() is checked — which scanFile did not do.
+// One oversized line therefore hid every entry written after it in that file, and
+// the query reported the truncated result as a complete one. No line in the live
+// corpus is close to the 1MB cap today, which is exactly why this would go
+// unnoticed the day one is.
+func TestAnOversizedLineFailsTheQueryInsteadOfTruncatingIt(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewFileStore(dir)
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+
+	day := filepath.Join(dir, time.Now().Format("2006-01-02"))
+	if err := os.MkdirAll(day, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// One good entry, one line over the 1MB cap, then another good entry: the last
+	// is the one silent truncation used to swallow.
+	huge, err := json.Marshal(models.LogEntry{
+		ID:        "oversized",
+		Timestamp: time.Now(),
+		Content:   map[string]any{"text": strings.Repeat("x", 1024*1024)},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	first, _ := json.Marshal(models.LogEntry{ID: "first", Timestamp: time.Now(), Content: "a"})
+	last, _ := json.Marshal(models.LogEntry{ID: "after-the-oversized-line", Timestamp: time.Now(), Content: "b"})
+
+	line := append(append(append(append(first, '\n'), huge...), '\n'), last...)
+	if err := os.WriteFile(filepath.Join(day, "openclaw.jsonl"), append(line, '\n'), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	_, err = store.Query(models.QueryParams{})
+	if err == nil {
+		t.Fatal("Query returned no error over a file with an oversized line: it silently dropped every entry after it")
+	}
+	if !strings.Contains(err.Error(), "openclaw.jsonl") {
+		t.Fatalf("Query error %q does not name the file it could not read", err)
+	}
+}
+
+// Group must return its groups in the same order every time.
+//
+// It built them in a map and ranged over it, and Go randomises map iteration — so
+// the same request reshuffled its groups between calls, under an operator who had
+// changed nothing. Biggest bucket first, ties by key.
+func TestGroupOrderIsDeterministic(t *testing.T) {
+	store := seedCorpus(t, 300)
+
+	var first []string
+	for run := 0; run < 8; run++ {
+		groups, err := store.Group(models.QueryParams{}, "orchestrator")
+		if err != nil {
+			t.Fatalf("Group: %v", err)
+		}
+
+		order := make([]string, len(groups))
+		for i, g := range groups {
+			order[i] = g.GroupKey
+		}
+
+		if run == 0 {
+			first = order
+			continue
+		}
+		for i := range first {
+			if order[i] != first[i] {
+				t.Fatalf("Group returned %v on run %d but %v on run 0: the group order is not stable", order, run, first)
+			}
+		}
+	}
+
+	// And the documented order: biggest bucket first.
+	groups, err := store.Group(models.QueryParams{}, "orchestrator")
+	if err != nil {
+		t.Fatalf("Group: %v", err)
+	}
+	for i := 1; i < len(groups); i++ {
+		if groups[i-1].Count < groups[i].Count {
+			t.Fatalf("group %q (n=%d) precedes %q (n=%d): groups must come back biggest-first",
+				groups[i-1].GroupKey, groups[i-1].Count, groups[i].GroupKey, groups[i].Count)
 		}
 	}
 }
