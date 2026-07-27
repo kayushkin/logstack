@@ -198,19 +198,22 @@ func (s *FileStore) Query(params models.QueryParams) ([]models.LogEntry, error) 
 	return results, nil
 }
 
-// Group aggregates logs by a specific field
+// Group aggregates logs by a specific field. It returns one count per bucket, and
+// — only when params.IncludeLogs is set (?logs=true) — the rows in each bucket too.
+//
+// A group-by is an aggregation: its answer is a count per key. Returning every row
+// inside every bucket by default re-serialised the whole corpus — one unscoped
+// GET /logs/group/<field> built an ~89MB response and pushed RSS past 600MB — for
+// rows that no caller reads (a caller that wants the rows uses GET /logs). So the
+// rows are opt-in, and the default anonymous call holds and serialises only counts.
 func (s *FileStore) Group(params models.QueryParams, groupBy string) ([]models.GroupedLogs, error) {
 	entries, err := s.Query(params)
 	if err != nil {
 		return nil, err
 	}
 
-	// Size every bucket before filling any, so each one is allocated exactly once.
-	//
-	// Appending into a map of slices grew each bucket by doubling, and the biggest
-	// bucket here holds ~143k entries: every doubling abandons the previous array,
-	// so grouping the 30-day window churned ~136MB of garbage to produce ~48MB of
-	// buckets. Counting first costs one extra pass over a slice already in memory.
+	// One pass counts every bucket. When the caller did not ask for the rows we
+	// stop here and never materialise the per-bucket slices at all.
 	keys := make([]string, len(entries))
 	counts := make(map[string]int, len(GroupFields))
 	for i := range entries {
@@ -218,20 +221,27 @@ func (s *FileStore) Group(params models.QueryParams, groupBy string) ([]models.G
 		counts[keys[i]]++
 	}
 
-	groups := make(map[string][]models.LogEntry, len(counts))
-	for key, n := range counts {
-		groups[key] = make([]models.LogEntry, 0, n)
-	}
-	for i := range entries {
-		groups[keys[i]] = append(groups[keys[i]], entries[i])
+	// Fill the buckets only on request. Size each one before filling any, so it is
+	// allocated exactly once: appending into a map of slices grew each bucket by
+	// doubling, and the biggest bucket here holds ~143k entries — every doubling
+	// abandons the previous array, so grouping the 30-day window churned ~136MB of
+	// garbage to produce ~48MB of buckets.
+	buckets := make(map[string][]models.LogEntry, len(counts))
+	if params.IncludeLogs {
+		for key, n := range counts {
+			buckets[key] = make([]models.LogEntry, 0, n)
+		}
+		for i := range entries {
+			buckets[keys[i]] = append(buckets[keys[i]], entries[i])
+		}
 	}
 
-	results := make([]models.GroupedLogs, 0, len(groups))
-	for key, logs := range groups {
+	results := make([]models.GroupedLogs, 0, len(counts))
+	for key, n := range counts {
 		results = append(results, models.GroupedLogs{
 			GroupKey: key,
-			Count:    len(logs),
-			Logs:     logs,
+			Count:    n,
+			Logs:     buckets[key], // nil unless IncludeLogs; omitempty drops it
 		})
 	}
 

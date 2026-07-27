@@ -126,6 +126,10 @@ type QueryParams struct {
 	To        time.Time `form:"to" time_format:"2006-01-02T15:04:05Z07:00"`
 	Limit     int       `form:"limit"`
 	Offset    int       `form:"offset"`
+	// IncludeLogs makes a group-by return the rows in each bucket as well as the
+	// count (query param ?logs=true). Off by default: a group-by is an aggregation,
+	// and returning every row re-serialises the whole corpus on an anonymous GET.
+	IncludeLogs bool `form:"logs"`
 }
 
 // GroupedLogs for aggregated views

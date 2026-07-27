@@ -526,3 +526,44 @@ func TestGroupOrderIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// A group-by is an aggregation: by default it must return counts only, not the rows
+// in every bucket. Returning every row re-serialised the whole corpus on an anonymous
+// GET (an ~89MB response, RSS past 600MB) for rows no caller reads. The rows come back
+// only when the caller opts in with IncludeLogs (?logs=true).
+func TestGroupOmitsRowsUnlessRequested(t *testing.T) {
+	store := seedCorpus(t, 300)
+
+	// Default: counts are populated, every bucket's Logs slice is empty, and the
+	// counts still sum to the whole corpus.
+	groups, err := store.Group(models.QueryParams{}, "orchestrator")
+	if err != nil {
+		t.Fatalf("Group: %v", err)
+	}
+	total := 0
+	for _, g := range groups {
+		if len(g.Logs) != 0 {
+			t.Fatalf("group %q returned %d rows by default; a group-by must return counts only unless logs are requested",
+				g.GroupKey, len(g.Logs))
+		}
+		if g.Count == 0 {
+			t.Fatalf("group %q has count 0", g.GroupKey)
+		}
+		total += g.Count
+	}
+	if total != 300 {
+		t.Fatalf("group counts sum to %d, want 300 (the whole seeded corpus)", total)
+	}
+
+	// Opt in: every bucket's Logs slice length must match its count.
+	withLogs, err := store.Group(models.QueryParams{IncludeLogs: true}, "orchestrator")
+	if err != nil {
+		t.Fatalf("Group(IncludeLogs): %v", err)
+	}
+	for _, g := range withLogs {
+		if len(g.Logs) != g.Count {
+			t.Fatalf("group %q returned %d rows but count %d: IncludeLogs must return every counted row",
+				g.GroupKey, len(g.Logs), g.Count)
+		}
+	}
+}

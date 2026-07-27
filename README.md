@@ -49,10 +49,15 @@ GET /api/v1/logs/{id}
 ### Aggregation
 
 ```bash
-# Group by field
+# Group by field — returns one count per bucket
 GET /api/v1/logs/group/model
 GET /api/v1/logs/group/source
 GET /api/v1/logs/group/day
+
+# Add ?logs=true to also return the rows in each bucket. Off by default:
+# a group-by is an aggregation, and returning every row re-serialises the
+# whole corpus (tens of MB, hundreds of MB of RSS) on an anonymous GET.
+GET /api/v1/logs/group/model?logs=true
 
 # Get statistics
 GET /api/v1/stats?source=inber&from=2026-03-01T00:00:00Z
