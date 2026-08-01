@@ -16,6 +16,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/kayushkin/logstack/models"
 )
 
 // OpenClaw JSONL entry
@@ -133,10 +135,10 @@ func convertEntry(e ocEntry, agent, sessionID string) *logEntry {
 		return nil
 	}
 
-	entryType := "outbound"
+	entryType := models.TypeOutbound
 	author := agent
 	if msg.Role == "user" {
-		entryType = "inbound"
+		entryType = models.TypeInbound
 		author = "user"
 		if m := authorRe.FindStringSubmatch(text); len(m) > 1 {
 			author = m[1]
@@ -312,7 +314,7 @@ func processFile(path, agent, sessionID string, offset int64, dryRun bool, logst
 
 		if dryRun {
 			role := "assistant"
-			if le.Type == "inbound" {
+			if le.Type == models.TypeInbound {
 				role = "user"
 			}
 			text := ""

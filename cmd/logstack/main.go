@@ -140,7 +140,7 @@ func setupNATS(nc *bus.Client, s store.Store) {
 			Channel:      msg.Channel,
 			SessionID:    sessionID,
 			Level:        "info",
-			Type:         "inbound",
+			Type:         models.TypeInbound,
 			Content: map[string]interface{}{
 				"text":   msg.Text,
 				"author": author,
@@ -184,7 +184,7 @@ func setupNATS(nc *bus.Client, s store.Store) {
 			Orchestrator: msg.Orchestrator,
 			SessionID:    msg.SessionID,
 			Level:        "info",
-			Type:         "outbound",
+			Type:         models.TypeOutbound,
 			Content:      content,
 			Stats:        msg.Stats,
 		}

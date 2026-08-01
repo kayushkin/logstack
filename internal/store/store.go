@@ -306,7 +306,7 @@ func (s *FileStore) Stats(params models.QueryParams) (*models.Stats, error) {
 // Usage returns aggregated token usage from outbound messages since `from`.
 func (s *FileStore) Usage(from time.Time) ([]models.UsageStats, error) {
 	params := models.QueryParams{
-		Type:  "outbound",
+		Type:  models.TypeOutbound,
 		From:  from,
 		Limit: 100000, // no practical limit
 	}
@@ -461,7 +461,7 @@ func calculateCost(model string, inputTokens, outputTokens, cacheReadTokens, cac
 // MaxUsage returns comprehensive Max subscription usage for a billing period
 func (s *FileStore) MaxUsage(from, to time.Time) (*models.MaxUsageResponse, error) {
 	params := models.QueryParams{
-		Type:  "outbound",
+		Type:  models.TypeOutbound,
 		From:  from,
 		To:    to,
 		Limit: 500000, // no practical limit

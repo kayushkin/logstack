@@ -93,15 +93,26 @@ type ToolEvent struct {
 	ToolOutput string `json:"tool_output,omitempty"`
 }
 
-// LogType constants
+// LogType constants.
+//
+// TypeInbound and TypeOutbound name a message's direction, and they are the
+// two that decide whether an entry is counted. Every usage reader in this
+// package — Usage and MaxUsage — queries TypeOutbound and nothing else, so a
+// producer that files its assistant turns under any other type contributes no
+// tokens, no dollars and no API calls, however complete its Stats block is.
+// They were bare "outbound" strings in four places and in none of the
+// producers, which is how inber came to file assistant turns as TypeMessage
+// and go uncounted for months.
 const (
-	TypeMessage   = "message"
-	TypeToolCall  = "tool_call"
+	TypeInbound    = "inbound"
+	TypeOutbound   = "outbound"
+	TypeMessage    = "message"
+	TypeToolCall   = "tool_call"
 	TypeToolResult = "tool_result"
-	TypeError     = "error"
-	TypeMetrics   = "metrics"
-	TypeLifecycle = "lifecycle"
-	TypeRouting   = "routing"
+	TypeError      = "error"
+	TypeMetrics    = "metrics"
+	TypeLifecycle  = "lifecycle"
+	TypeRouting    = "routing"
 )
 
 // Level constants
