@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kayushkin/logstack/internal/textutil"
 	"github.com/kayushkin/logstack/models"
 )
 
@@ -320,11 +321,11 @@ func processFile(path, agent, sessionID string, offset int64, dryRun bool, logst
 			text := ""
 			if t, ok := le.Content["text"].(string); ok {
 				if len(t) > 80 {
-					t = t[:80] + "..."
+					t = textutil.TruncateAtRuneBoundary(t, 80) + "..."
 				}
 				text = t
 			}
-			log.Printf("[dry-run] %s/%s %s: %s", agent, sessionID[:8], role, text)
+			log.Printf("[dry-run] %s/%s %s: %s", agent, textutil.TruncateAtRuneBoundary(sessionID, 8), role, text)
 		} else {
 			batch = append(batch, *le)
 		}
