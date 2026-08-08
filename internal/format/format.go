@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kayushkin/logstack/internal/textutil"
 	"github.com/kayushkin/logstack/models"
 )
 
@@ -100,14 +101,14 @@ func (f *Formatter) Summary(entry *models.LogEntry) string {
 	switch v := entry.Content.(type) {
 	case string:
 		if len(v) > 50 {
-			content = v[:50] + "..."
+			content = textutil.TruncateAtRuneBoundary(v, 50) + "..."
 		} else {
 			content = v
 		}
 	case map[string]interface{}:
 		if msg, ok := v["message"].(string); ok {
 			if len(msg) > 50 {
-				content = msg[:50] + "..."
+				content = textutil.TruncateAtRuneBoundary(msg, 50) + "..."
 			} else {
 				content = msg
 			}
@@ -141,7 +142,7 @@ func (f *Formatter) Table(entries []models.LogEntry) string {
 		switch v := entry.Content.(type) {
 		case string:
 			if len(v) > 40 {
-				content = v[:40] + "..."
+				content = textutil.TruncateAtRuneBoundary(v, 40) + "..."
 			} else {
 				content = v
 			}
