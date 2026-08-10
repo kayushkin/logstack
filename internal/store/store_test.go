@@ -51,6 +51,41 @@ func TestGroupFieldsAreHandled(t *testing.T) {
 	}
 }
 
+// TestGroupFieldsIsTheExpectedSet pins the contents of GroupFields itself.
+//
+// Every other test in this file loops GroupFields, which means each one asks
+// its question once per field that is present and asks nothing at all about a
+// field that is absent. Measured: deleting "model" from GroupFields takes
+// TestGroupFieldsAreHandled from nine subtests to eight and the package still
+// reports ok. Nothing reddens, and GET /api/v1/logs/group/model starts
+// answering 400 for a field the store can still group by perfectly well,
+// because handler.go asks IsGroupField and IsGroupField reads this list.
+//
+// So this expectation is a literal. It is deliberately not derived from
+// GroupFields, getGroupKey, or anything else that moves when the source moves;
+// removing a grouping the API offers should cost somebody an edit here.
+func TestGroupFieldsIsTheExpectedSet(t *testing.T) {
+	expected := []string{
+		"orchestrator", "agent", "channel",
+		"model", "level", "type",
+		"session", "hour", "day",
+	}
+
+	present := map[string]bool{}
+	for _, field := range GroupFields {
+		present[field] = true
+	}
+	for _, field := range expected {
+		if !present[field] {
+			t.Errorf("GroupFields no longer offers %q, so the API can no longer group by it", field)
+		}
+		delete(present, field)
+	}
+	for field := range present {
+		t.Errorf("GroupFields offers %q, which this test was not told about; add it here once getGroupKey handles it", field)
+	}
+}
+
 // TestQueryDoesNotTakeTheIndexLock pins the invariant behind the log-sink
 // stall: Query must scan the filesystem without holding mu.
 //
