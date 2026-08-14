@@ -267,6 +267,16 @@ func TestSortByTimestampIsNotQuadratic(t *testing.T) {
 // seedCorpus writes n entries across a few day-dirs and returns a store over them.
 // Every 7th entry shares a timestamp with its predecessor, so the tie handling the
 // bounded selector has to reproduce is actually exercised.
+//
+// The corpus is anchored to the clock, not to a calendar date, and that is
+// load-bearing. Write files an entry under its own timestamp's day-dir, while a
+// Query with no window scans the last 30 days off time.Now(). A fixture stamped
+// with an absolute date therefore stops being visible to the default query on a
+// fixed day — this one was stamped 2026-07-12 and aged out of the window on
+// 2026-08-11, after which Query returned nothing to any test built on it. One
+// test went red; four went silently vacuous, comparing empty against empty.
+// Anchoring the last entry at roughly now keeps the whole corpus inside the
+// window on every day it is ever run.
 func seedCorpus(t *testing.T, n int) *FileStore {
 	t.Helper()
 
@@ -276,7 +286,20 @@ func seedCorpus(t *testing.T, n int) *FileStore {
 		t.Fatalf("NewFileStore: %v", err)
 	}
 
-	base := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	// The entries span n seconds. getDirsToScan looks back 30 day-dirs, so a
+	// corpus longer than that window could not be seen whole however it is
+	// anchored — say so rather than silently seeding rows no query will read.
+	span := time.Duration(n) * time.Second
+	if maxSpan := 28 * 24 * time.Hour; span > maxSpan {
+		t.Fatalf("seedCorpus(%d) spans %s, which is wider than the %s window an unwindowed Query scans: "+
+			"the corpus could not be seen whole by the tests built on it", n, span, maxSpan)
+	}
+
+	// Local zone, because getDirsToScan formats its day-dirs off an unconverted
+	// time.Now(); a fixture in another zone would disagree about the date near
+	// midnight. Ending at roughly now rather than starting there keeps every
+	// entry in the past, so no row lands in a day-dir ahead of the window.
+	base := time.Now().Add(-span)
 	ts := base
 	for i := 0; i < n; i++ {
 		if i%7 != 0 {
@@ -294,6 +317,27 @@ func seedCorpus(t *testing.T, n int) *FileStore {
 			t.Fatalf("Write: %v", err)
 		}
 	}
+
+	// Prove the corpus is visible to an unwindowed Query before any test uses it.
+	//
+	// This is the floor, and it is here rather than in each test because an
+	// invisible corpus does not fail the tests built on it — it empties them.
+	// Every assertion in this file compares one query result against another
+	// (bounded against reference, group order against group order), and empty
+	// equals empty. When this fixture aged out of the query window, four tests
+	// kept passing while asserting nothing: the offset-past-the-end guard, the
+	// limit slicing, the newest-first ordering and the IncludeLogs opt-in could
+	// all be deleted outright with the suite still green. Measured, not assumed.
+	visible, err := store.Query(models.QueryParams{})
+	if err != nil {
+		t.Fatalf("Query over the freshly seeded corpus: %v", err)
+	}
+	if len(visible) != n {
+		t.Fatalf("seeded %d entries but an unwindowed Query sees %d: the corpus is outside the window Query scans, "+
+			"so every test built on this fixture would compare empty against empty and pass without asserting anything",
+			n, len(visible))
+	}
+
 	return store
 }
 
