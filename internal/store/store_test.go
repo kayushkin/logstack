@@ -326,8 +326,8 @@ func seedCorpus(t *testing.T, n int) *FileStore {
 	// (bounded against reference, group order against group order), and empty
 	// equals empty. When this fixture aged out of the query window, four tests
 	// kept passing while asserting nothing: the offset-past-the-end guard, the
-	// limit slicing, the newest-first ordering and the IncludeLogs opt-in could
-	// all be deleted outright with the suite still green. Measured, not assumed.
+	// newest-first ordering and the IncludeLogs opt-in could all be deleted
+	// outright with the suite still green. Measured by sabotage, not assumed.
 	visible, err := store.Query(models.QueryParams{})
 	if err != nil {
 		t.Fatalf("Query over the freshly seeded corpus: %v", err)
