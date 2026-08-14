@@ -26,6 +26,17 @@ import (
 //
 // A field that reaches getGroupKey's default case is a field that silently
 // lies about its results, so treat that as the failure it is.
+//
+// The loop below draws its subtests from GroupFields, so it asks nothing at all
+// about a field that has been deleted from the table -- the suite reports ok
+// with one fewer subtest and nobody reads the number. Measured 2026-08-14:
+// deleting any one of the nine rows left the whole package green. groupFieldFloor
+// is what turns that silent shrink into a failure. Raise it when the table
+// grows; lower it only as a deliberate act, in the same commit that drops the
+// field from GroupFields, because dropping a field is an API change -- it makes
+// GET /api/v1/logs/group/<field> start answering 400.
+const groupFieldFloor = 9
+
 func TestGroupFieldsAreHandled(t *testing.T) {
 	entry := &models.LogEntry{
 		Timestamp:    time.Now(),
@@ -38,7 +49,9 @@ func TestGroupFieldsAreHandled(t *testing.T) {
 		SessionID:    "sess-1",
 	}
 
+	asserted := 0
 	for _, field := range GroupFields {
+		asserted++
 		t.Run(field, func(t *testing.T) {
 			key := getGroupKey(entry, field)
 			if key == "unknown" {
@@ -48,6 +61,10 @@ func TestGroupFieldsAreHandled(t *testing.T) {
 				t.Errorf("getGroupKey(%q) returned an empty key for a fully-populated entry", field)
 			}
 		})
+	}
+	if asserted < groupFieldFloor {
+		t.Errorf("checked %d group fields, want at least %d: a field has been dropped from GroupFields "+
+			"and its subtest disappeared with it, so nothing here noticed", asserted, groupFieldFloor)
 	}
 }
 
@@ -184,10 +201,21 @@ func TestIsGroupFieldRejectsUnknownFields(t *testing.T) {
 		}
 	}
 
+	// This half reads as a tautology -- IsGroupField is itself a scan of
+	// GroupFields -- but it is not one: it pins IsGroupField's answer to the
+	// table for every row, and an implementation that drifts from the table
+	// fails here. What it cannot see is the table getting shorter, which is why
+	// it counts and floors like TestGroupFieldsAreHandled does.
+	asserted := 0
 	for _, field := range GroupFields {
+		asserted++
 		if !IsGroupField(field) {
 			t.Errorf("IsGroupField(%q) = false for a field in GroupFields", field)
 		}
+	}
+	if asserted < groupFieldFloor {
+		t.Errorf("checked %d advertised fields, want at least %d: GroupFields has shrunk and this loop "+
+			"shrank with it", asserted, groupFieldFloor)
 	}
 }
 
