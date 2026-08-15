@@ -293,7 +293,13 @@ func processFile(path, agent, sessionID string, offset int64, dryRun bool, logst
 	}
 
 	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB lines
+	// The largest line this accepts is 1024*1024 - 1 bytes, not 1024*1024. A
+	// line of exactly the cap fills the buffer with no newline in it, so the
+	// token-too-long check fires before the split can succeed. The two spellings
+	// are the starting buffer and the cap, not two separate ceilings — the
+	// effective one is the larger of the two. Pinned from both sides by
+	// TestScannerAcceptsALineOfExactlyItsCeiling.
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 	var batch []logEntry
 	count := 0
 
@@ -332,6 +338,39 @@ func processFile(path, agent, sessionID string, offset int64, dryRun bool, logst
 		count++
 	}
 
+	// Read the position while the scan is the only thing that has moved it, and
+	// before the push below can return early and take the scan error with it.
+	newOffset, err := f.Seek(0, io.SeekCurrent)
+	if err != nil {
+		// Discarding this error would hand the caller a zero offset that is
+		// indistinguishable from a deliberate rewind, and the whole session file
+		// would be re-pushed from the top on the next poll.
+		return offset, count, fmt.Errorf("read cursor position for %s: %w", path, err)
+	}
+
+	// A scan that ended on an error is not a clean end of file, and Scan()
+	// reports both the same way: it returns false. bufio.Scanner fails with
+	// ErrTooLong when a line fills the buffer with no newline in it, so without
+	// this check an over-long entry is dropped in total silence while poll()
+	// logs "pushed N messages" and the run reports success.
+	//
+	// Logged, deliberately NOT returned. poll() reads a non-nil error as "leave
+	// the cursor alone and retry next tick", which on an over-long line would
+	// re-read that same line every tick forever and never reach the entries
+	// after it. Advancing past it is what lets the file recover — measured
+	// 2026-08-15: a 3MB line costs three polls and every entry after it still
+	// arrives. Only the over-long entry itself is lost, and it is lost either
+	// way.
+	//
+	// Whether skipping is the right policy fleet-wide is still an open question
+	// — 6fbf83b3 asks it of llm-bridge-adapter's identical 1MB SSE ceiling, and
+	// three repos share the shape. This change settles nothing there; it only
+	// stops the failure being silent.
+	if err := scanner.Err(); err != nil {
+		log.Printf("openclaw-logpush: %s/%s: scan stopped at offset %d of %d after %d entries: %v — the over-long entry is skipped, later entries resume on the next poll",
+			agent, sessionID, newOffset, info.Size(), count, err)
+	}
+
 	// Push batch
 	if !dryRun && len(batch) > 0 {
 		// Push in chunks of 50
@@ -346,7 +385,6 @@ func processFile(path, agent, sessionID string, offset int64, dryRun bool, logst
 		}
 	}
 
-	newOffset, _ := f.Seek(0, io.SeekCurrent)
 	return newOffset, count, nil
 }
 
