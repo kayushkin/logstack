@@ -101,6 +101,17 @@ UNSCORABLE = [
         "every other test supplies this URL explicitly: the port that ships is "
         "the one value in the file no test has ever used.",
     ),
+    Unscorable(
+        "logpush: the f.Seek error branch itself",
+        LOGPUSH,
+        "The fix stopped discarding this error, and the branch it added cannot "
+        "be driven from a test. Seek(0, io.SeekCurrent) on an open, healthy "
+        "file does not fail, and processFile opens the file itself, so a test "
+        "has no way to hand it a descriptor that would. The WHENCE argument is "
+        "scored as a real row; the error check guarding it is reachable only "
+        "with a seam -- an injectable opener -- which this row does not "
+        "assume is worth adding. Named so the gap is not read as coverage.",
+    ),
 ]
 
 
@@ -318,6 +329,79 @@ MUTATIONS = [
         None,
         "Behaviour-preserving for the mirrored reason: a buffer short of the "
         "maximum is grown to it on demand, so the ceiling is unchanged.",
+    ),
+    # ---- logpush: what happens when the ceiling above is HIT -----------------
+    # The four rows above score the ceiling's VALUE. These score its failure
+    # mode, which was filed as 603e3ded and unscored by anything until the fix
+    # landed: scanner.Err() was never read, so an over-long line ended the scan
+    # exactly as a clean EOF does and the dropped entry was invisible.
+    #
+    # Note what is NOT here: a row that propagates the error instead of logging
+    # it. That is not a defect to catch, it is the open policy question 6fbf83b3
+    # asks of three repos sharing this ceiling, so it is scored as a real row
+    # below only because the SUITE must notice the change — not because the
+    # answer is settled.
+    Mutation(
+        "logpush: scan error not reported at all",
+        LOGPUSH,
+        "\tif err := scanner.Err(); err != nil {",
+        "\tif err := scanner.Err(); false {",
+        True,
+        "TestAnOverLongLineIsReportedInsteadOfPassingAsCleanEOF",
+        "The original defect, put back. An over-long entry is dropped for good "
+        "while processFile returns nil and poll() logs 'pushed N messages'. The "
+        "run reports success and the loss is silent, which is the standing "
+        "directive's first rule broken exactly.",
+    ),
+    Mutation(
+        "logpush: scan error reported without naming the session",
+        LOGPUSH,
+        'log.Printf("openclaw-logpush: %s/%s: scan stopped at offset %d of %d after %d entries: %v — the over-long entry is skipped, later entries resume on the next poll",\n\t\t\tagent, sessionID, newOffset, info.Size(), count, err)',
+        'log.Printf("openclaw-logpush: scan stopped: %v", err)',
+        True,
+        "TestAnOverLongLineIsReportedInsteadOfPassingAsCleanEOF",
+        "Half a report is the failure mode worth scoring separately: the line "
+        "appears, so a reader believes the case is handled, but it names "
+        "neither the session that lost an entry nor where in the file it "
+        "stopped. Nothing can be done with it.",
+    ),
+    Mutation(
+        "logpush: scan error propagated instead of reported",
+        LOGPUSH,
+        "\tif err := scanner.Err(); err != nil {",
+        "\tif err := scanner.Err(); err != nil {\n\t\treturn offset, count, err\n\t}\n\tif false {",
+        True,
+        "TestEntriesAfterAnOverLongLineArriveOnALaterPoll",
+        "The change the card 603e3ded asked for literally, and the reason it "
+        "was not made: poll() reads a non-nil error as 'do not advance the "
+        "cursor', so the daemon re-reads the same over-long line every tick "
+        "forever and every entry after it is lost permanently — converting a "
+        "one-entry loss into a total stall. Whoever answers 6fbf83b3 must "
+        "redden this row on purpose.",
+    ),
+    Mutation(
+        "logpush: scan error reported on every file",
+        LOGPUSH,
+        "\tif err := scanner.Err(); err != nil {",
+        "\tif err := scanner.Err(); true {",
+        True,
+        "TestACleanFileLogsNothing",
+        "A report that fires on every ordinary poll reports nothing. Scored "
+        "because the value of the fix is entirely in the line MEANING something "
+        "when it appears, and a suite that only checks the error case cannot "
+        "tell a working report from a stuck one.",
+    ),
+    Mutation(
+        "logpush: cursor position read from the wrong whence",
+        LOGPUSH,
+        "newOffset, err := f.Seek(0, io.SeekCurrent)",
+        "newOffset, err := f.Seek(0, io.SeekStart)",
+        True,
+        None,
+        "The cursor resets to the top of the file on every poll, so the daemon "
+        "re-pushes the whole session forever. Scored here rather than with the "
+        "ceiling rows because it is the same Seek whose error the fix stopped "
+        "discarding.",
     ),
     Mutation(
         "logpush: cursor DIRECTORY mode",

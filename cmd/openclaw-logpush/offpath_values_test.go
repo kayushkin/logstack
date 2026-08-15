@@ -231,10 +231,12 @@ func TestPushFailsOnTheFirstNonSuccessStatus(t *testing.T) {
 // known-negatives. Only moving one UP moves the ceiling, and that is what this
 // test holds.
 //
-// ⚠️ The over-ceiling half asserts current behaviour, not correct behaviour: a
-// line over the ceiling stops the scan and processFile returns a nil error,
-// because scanner.Err() is never read. That defect is filed separately as
-// 603e3ded. Pinning the count here is what makes the ceiling observable at all.
+// The over-ceiling half returns a nil error, and that is now deliberate rather
+// than the swallow it used to be. scanner.Err() is read and reported; it is not
+// propagated, because poll() treats a non-nil error as "do not advance the
+// cursor" and the daemon would re-read the same over-long line forever. See
+// scan_error_test.go, which holds the report, the recovery across polls, and the
+// one entry that really is lost. (Filed as 603e3ded, fixed 2026-08-15.)
 func TestScannerAcceptsALineOfExactlyItsCeiling(t *testing.T) {
 	const ceiling = 1024*1024 - 1
 
