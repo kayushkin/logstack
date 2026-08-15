@@ -186,6 +186,182 @@ MUTATIONS = [
         "guard to match on. Reverting it restores both the panic on a short "
         "filename stem and the corruption on a multi-byte one.",
     ),
+    # ---- the boundary VALUES ----------------------------------------------
+    # Every row above breaks a MECHANISM: the walk-back, or a call site's use of
+    # it. None of them moves a number. A suite can hold all of them and still let
+    # every budget in this repo drift by one, because a test that proves a cut
+    # landed on a rune boundary does not say WHERE the boundary was.
+    #
+    # These rows move each literal by one unit, which is the smallest move that
+    # is still a defect. A far move is a deletion wearing a number and the
+    # mechanism rows already cover it.
+    #
+    # Each cut is spelled TWICE — a guard that decides whether to cut, and the
+    # budget handed to the cut. They are separate literals that have to agree,
+    # and no single test sees both, so they are scored separately.
+    Mutation(
+        "value: helper's empty-budget guard widens by one",
+        HELPER,
+        "if maxBytes <= 0 {",
+        "if maxBytes <= 1 {",
+        True,
+        "TestTruncateAtRuneBoundaryKeepsOneByteAtABudgetOfOne",
+        "A budget of 1 starts returning \"\". The budget sweep runs over this "
+        "value and cannot separate it: for a multi-byte rune the walk-back "
+        "correctly yields \"\" at a budget of 1 either way, so it takes a "
+        "single-byte input at that budget to tell the two apart.",
+    ),
+    Mutation(
+        "value: helper's fits-in-budget guard widens by one",
+        HELPER,
+        "if len(s) <= maxBytes {",
+        "if len(s) <= maxBytes+1 {",
+        True,
+        "TestTruncateAtRuneBoundaryCutsAStringOneByteOverTheBudget",
+        "A string exactly one byte over its budget is returned whole, i.e. the "
+        "helper ships a value over the limit it exists to enforce.",
+    ),
+    Mutation(
+        "value: helper's cut starts one byte early",
+        HELPER,
+        "cut := maxBytes",
+        "cut := maxBytes - 1",
+        True,
+        "TestTruncateAtRuneBoundaryCutsExactlyAtAnAlignedBudget",
+        "Every result loses its last byte. Within budget and valid UTF-8, so "
+        "only an assertion on WHERE the cut landed can see it.",
+    ),
+    Mutation(
+        "value: helper's walk-back stops one byte early",
+        HELPER,
+        "for cut > 0 && !utf8.RuneStart(s[cut]) {",
+        "for cut > 1 && !utf8.RuneStart(s[cut]) {",
+        True,
+        "TestTruncateAtRuneBoundaryDropsARuneWiderThanTheBudget",
+        "Only observable when the walk-back has to reach 0 — a string whose "
+        "FIRST rune is wider than the budget. It then returns that rune's lead "
+        "byte alone, which is invalid UTF-8, and the budget sweep's input "
+        "starts with ASCII so it never reaches the case.",
+    ),
+    Mutation(
+        "value: Summary string guard 50 -> 51",
+        FORMAT,
+        "if len(v) > 50 {",
+        "if len(v) > 51 {",
+        True,
+        "TestSummaryStringContentIsCutOneByteOverItsBudget",
+        "Content of exactly 51 bytes is emitted whole. The rune-boundary tests "
+        "all use content far over the guard, where moving it by one changes "
+        "nothing.",
+    ),
+    Mutation(
+        "value: Summary string budget 50 -> 49",
+        FORMAT,
+        "content = textutil.TruncateAtRuneBoundary(v, 50)",
+        "content = textutil.TruncateAtRuneBoundary(v, 49)",
+        True,
+        "TestSummaryCutsStringContentAtExactlyFiftyBytes",
+        "The guard's twin. Moving only the budget ships 49 bytes past a guard "
+        "that fires at 51, and the result is still valid UTF-8 and still under "
+        "the budget, so every existing assertion holds.",
+    ),
+    Mutation(
+        "value: Summary map guard 50 -> 51",
+        FORMAT,
+        "if len(msg) > 50 {",
+        "if len(msg) > 51 {",
+        True,
+        "TestSummaryMapMessageIsCutOneByteOverItsBudget",
+        "The same guard again, in the map branch. Two spellings of one budget "
+        "in one function: a test for either branch covers the other in "
+        "appearance only.",
+    ),
+    Mutation(
+        "value: Summary map budget 50 -> 49",
+        FORMAT,
+        "content = textutil.TruncateAtRuneBoundary(msg, 50)",
+        "content = textutil.TruncateAtRuneBoundary(msg, 49)",
+        True,
+        "TestSummaryCutsMapMessageAtExactlyFiftyBytes",
+        "Fourth of the six numbers spelling Summary's and Table's three cuts.",
+    ),
+    Mutation(
+        "value: Table guard 40 -> 41",
+        FORMAT,
+        "if len(v) > 40 {",
+        "if len(v) > 41 {",
+        True,
+        "TestTableContentIsCutOneByteOverItsBudget",
+        "Table's budget is 40, not 50, so a fixture built for Summary passes "
+        "here whatever this number says.",
+    ),
+    Mutation(
+        "value: Table budget 40 -> 39",
+        FORMAT,
+        "content = textutil.TruncateAtRuneBoundary(v, 40)",
+        "content = textutil.TruncateAtRuneBoundary(v, 39)",
+        True,
+        "TestTableCutsContentAtExactlyFortyBytes",
+        "The Table guard's twin.",
+    ),
+    Mutation(
+        "value: dry-run text guard 80 -> 81",
+        LOGPUSH,
+        "if len(t) > 80 {",
+        "if len(t) > 81 {",
+        True,
+        "TestDryRunTextIsCutOneByteOverItsBudget",
+        "A message of exactly 81 bytes is logged whole.",
+    ),
+    Mutation(
+        "value: dry-run text budget 80 -> 79",
+        LOGPUSH,
+        "t = textutil.TruncateAtRuneBoundary(t, 80)",
+        "t = textutil.TruncateAtRuneBoundary(t, 79)",
+        True,
+        "TestDryRunTextIsCutAtExactlyEightyBytes",
+        "The guard's twin, and the rune-boundary fixture cannot see it: its "
+        "four-byte rune spans offsets 78..81, so a cut at 79 and a cut at 80 "
+        "both walk back to 78 and produce the same string.",
+    ),
+    Mutation(
+        "value: dry-run session id 8 -> 7",
+        LOGPUSH,
+        "textutil.TruncateAtRuneBoundary(sessionID, 8)",
+        "textutil.TruncateAtRuneBoundary(sessionID, 7)",
+        True,
+        "TestDryRunLogLineSurvivesAShortOrMultibyteSessionID",
+        "The one value already pinned when this sweep arrived, and by accident "
+        "of shape rather than intent: the existing case list asserts the exact "
+        "prefix with its trailing space, so any move of this number reddens it.",
+    ),
+    # ---- one known-negative per target -------------------------------------
+    # The two above are both in the helper, so before this sweep FORMAT and
+    # LOGPUSH had no control at all: a dead harness there was indistinguishable
+    # from a clean sheet. Each of these is a rewrite that is identical for every
+    # integer, so it must go UNNOTICED.
+    Mutation(
+        "KNOWN NEGATIVE, format: Table guard rewritten",
+        FORMAT,
+        "if len(v) > 40 {",
+        "if len(v) >= 41 {",
+        False,
+        None,
+        "Identical for every integer. FORMAT's control: without it, a format "
+        "run that reddens on any edit at all scores the same as one that "
+        "detects the defect.",
+    ),
+    Mutation(
+        "KNOWN NEGATIVE, logpush: dry-run text guard rewritten",
+        LOGPUSH,
+        "if len(t) > 80 {",
+        "if len(t) >= 81 {",
+        False,
+        None,
+        "Identical for every integer. LOGPUSH's control, and the package where "
+        "one is worth most: its tests drive a whole file through processFile, "
+        "so they have the most ways to redden for reasons of their own.",
+    ),
 ]
 
 
@@ -365,12 +541,72 @@ def self_test():
     print("  all four verdicts reachable and correct\n")
 
 
+def control_summary(rows):
+    """Report, per target file, what its known-negatives actually did.
+
+    An aggregate "N/N known-negatives correctly unnoticed" is true and still
+    hides the thing worth knowing: WHICH targets have a control. A file with no
+    known-negative row prints exactly like a file with a working one, and a
+    target with no control cannot tell a suite that detects the defect from one
+    that reddens whenever the source changes at all.
+
+    Three states, and the third is the one an aggregate erases:
+      behaved  a control ran and stayed UNNOTICED, as it must
+      FIRED    a control went red, so this target's score means nothing
+      NONE     nothing was measured here; the score is unqualified
+    """
+    lines = []
+    for path in (HELPER, FORMAT, LOGPUSH):
+        negs = [r for r in rows if not r[0].real and r[0].path == path]
+        if not negs:
+            state = "NONE     no known-negative for this target; its score is unqualified"
+        elif all(r[1] == "UNNOTICED" for r in negs):
+            state = f"behaved  {len(negs)} known-negative(s) stayed unnoticed"
+        else:
+            fired = [r[0].name for r in negs if r[1] != "UNNOTICED"]
+            state = f"FIRED    {', '.join(fired)} — this target's score means nothing"
+        lines.append(f"       {path:34s} {state}")
+    return lines
+
+
+def self_test_control_summary():
+    """Drive all three control states from literals.
+
+    control_summary() is a reporter of last resort: if it can only ever say
+    "behaved" it prints a reassuring line forever and nothing checks it. Same
+    argument as the classifier self-test above, applied to the instrument that
+    reports on the instrument.
+    """
+
+    def row(path, real, verdict):
+        return (Mutation("probe", path, "a", "b", real, None, ""), verdict, [])
+
+    cases = [
+        ("no control -> NONE", [row(HELPER, True, "CAUGHT")], "NONE"),
+        ("control held -> behaved", [row(HELPER, False, "UNNOTICED")], "behaved"),
+        ("control red -> FIRED", [row(HELPER, False, "CAUGHT")], "FIRED"),
+    ]
+
+    print("control-summary self-test")
+    bad = 0
+    for name, rows, want in cases:
+        got = control_summary(rows)[0]
+        ok = want in got
+        bad += 0 if ok else 1
+        print(f"  {'ok ' if ok else 'BAD'} {name:42s} -> {got.strip()[:60]}")
+    if bad:
+        print("\ncontrol reporting is wrong; not scoring anything with a broken instrument")
+        sys.exit(1)
+    print("  all three control states reachable and correct\n")
+
+
 def main():
     for p in (HELPER, FORMAT, LOGPUSH):
         if not os.path.exists(p):
             sys.exit(f"run me from the repo root; missing {p}")
 
     self_test()
+    self_test_control_summary()
 
     originals = {p: open(p).read() for p in (HELPER, FORMAT, LOGPUSH)}
 
@@ -471,6 +707,8 @@ def main():
 
     print(f"SCORE  {len(caught)}/{len(real)} real defects caught")
     print(f"       {len(held)}/{len(negs)} known-negatives correctly unnoticed")
+    for line in control_summary(rows):
+        print(line)
     print(f"       {len(guard_only)} rows caught by a reach-guard only")
     print(f"       {len(missed_site)} sites covered only by a neighbouring test")
     bad = [r for r in rows if r[1] in ("STALE PATTERN", "AMBIGUOUS PATTERN")]
