@@ -424,14 +424,39 @@ func TestBoundedQueryMatchesSortingEverything(t *testing.T) {
 // churn — that is the property, and it is what regresses if anyone reinstates the
 // materialise-everything path. The ratio is deliberately generous (the true
 // difference is ~500x here); nothing legitimate lands near it.
+//
+// Both figures are heap deltas, so both are meaningless unless the queries that
+// produced them read the rows this test assumes. Over an empty corpus each one is
+// GC jitter — measured at 0 and 16 bytes — and `bounded > unbounded/8` then
+// compares noise against noise and lands on either side at random. That is not
+// hypothetical: it is how this test behaved for eleven days while the seed corpus
+// sat outside the query window, reported as an unexplained flake that only showed
+// up under `go test ./...` because sibling packages perturb the heap.
+//
+// ⚠️ The row floors below are NOT what fixed that. seedCorpus refuses to return a
+// corpus an unwindowed Query cannot see, so the aged-fixture case now dies in the
+// fixture with its cause named, before this test runs — scored, and it reports as
+// a fixture refusal rather than an assertion here. The unbounded floor is a
+// backstop for a store not built by seedCorpus, and it is written to stay quiet.
+//
+// The bounded floor is the one that earns its keep, and it guards a different
+// hole: nothing else here checks that the bounded query returned the rows it asked
+// for, and a query that returns FEWER rows than its limit retains less, so it
+// passes the ratio below more comfortably the more broken it is. Sibling tests do
+// catch that, so this is a vacuity in this test's own wording rather than a gap in
+// the package — see scripts/sabotage-retention-floor.py, which scores the
+// difference and prints which of the two it is.
 func TestBoundedQueryDoesNotRetainTheCorpus(t *testing.T) {
 	if testing.Short() {
 		t.Skip("seeds a corpus large enough to measure retention")
 	}
 
-	store := seedCorpus(t, 40_000)
+	const corpusSize = 40_000
+	const boundedLimit = 100
 
-	liveHeapOf := func(params models.QueryParams) uint64 {
+	store := seedCorpus(t, corpusSize)
+
+	liveHeapOf := func(params models.QueryParams) (uint64, int) {
 		var before, after runtime.MemStats
 		runtime.GC()
 		runtime.ReadMemStats(&before)
@@ -446,17 +471,32 @@ func TestBoundedQueryDoesNotRetainTheCorpus(t *testing.T) {
 		runtime.KeepAlive(got) // the result must still be live when we measure
 
 		if after.HeapAlloc < before.HeapAlloc {
-			return 0
+			return 0, len(got)
 		}
-		return after.HeapAlloc - before.HeapAlloc
+		return after.HeapAlloc - before.HeapAlloc, len(got)
 	}
 
-	bounded := liveHeapOf(models.QueryParams{Limit: 100})
-	unbounded := liveHeapOf(models.QueryParams{})
+	bounded, boundedRows := liveHeapOf(models.QueryParams{Limit: boundedLimit})
+	unbounded, unboundedRows := liveHeapOf(models.QueryParams{})
+
+	// Backstop: seedCorpus already refuses to hand back an invisible corpus, so
+	// this is expected never to fire. Kept because the ratio below cannot fail for
+	// the right reason without it, and unreachable is cheaper than wrong.
+	if unboundedRows != corpusSize {
+		t.Fatalf("the unbounded Query saw %d of %d seeded entries, so this test is measuring GC noise "+
+			"rather than retention. seedCorpus should have refused this corpus already; that it did not "+
+			"means the fixture floor is gone too (unbounded retained %d bytes).",
+			unboundedRows, corpusSize, unbounded)
+	}
+	if boundedRows != boundedLimit {
+		t.Fatalf("Query(limit=%d) returned %d rows over a corpus of %d; the bounded retention figure "+
+			"below describes a query that did not do what this test assumes.",
+			boundedLimit, boundedRows, corpusSize)
+	}
 
 	if bounded > unbounded/8 {
-		t.Fatalf("Query(limit=100) retained %d bytes; the unbounded query over the same corpus retained %d. "+
-			"A bounded query is materialising the whole window again.", bounded, unbounded)
+		t.Fatalf("Query(limit=%d) retained %d bytes; the unbounded query over the same corpus retained %d. "+
+			"A bounded query is materialising the whole window again.", boundedLimit, bounded, unbounded)
 	}
 }
 
