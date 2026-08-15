@@ -10,11 +10,17 @@ enumerated by the 186th nightly pass and never scored by anything.
 This is their scorer. Same instrument, different targets: put each defect back
 one at a time and record whether the suite goes red.
 
-Two of the enumerated numbers cannot be reached at all. They are flag defaults
-registered inside main(), and nothing in a test can call main(). They are
-printed by name at the end of every run rather than dropped, because a scorer
-that silently omits what it cannot measure reads exactly like one that measured
-everything.
+One enumerated branch cannot be reached at all, and is printed by name at the
+end of every run rather than dropped, because a scorer that silently omits what
+it cannot measure reads exactly like one that measured everything.
+
+Until 2026-08-15 there were three, and two of them were the flag defaults: they
+were registered inside main(), and nothing in a test can call main(). The seam
+those rows asked for — lifting the flag set into parseFlags(args) — was built,
+and it turned out to rescue more than the two literals that were named. The
+home-relative data directory and the cursor file path were unreachable for the
+same reason and were never enumerated, so six rows below are flag-default rows
+where the NOT SCORED list predicted two.
 
 Verdicts
 --------
@@ -87,21 +93,6 @@ class Unscorable:
 
 UNSCORABLE = [
     Unscorable(
-        "logpush: -interval default (5s)",
-        LOGPUSH,
-        "flag.Duration registered inside main(). No test can call main(), so "
-        "the value that ships is reachable only by running the binary. Pinning "
-        "it needs a seam -- lift the flag set into a function that returns the "
-        "parsed config -- which is a production change this sweep does not make.",
-    ),
-    Unscorable(
-        "logpush: -logstack-url default (http://localhost:8088)",
-        LOGPUSH,
-        "Same shape as the interval. Worth more than the interval, because "
-        "every other test supplies this URL explicitly: the port that ships is "
-        "the one value in the file no test has ever used.",
-    ),
-    Unscorable(
         "logpush: the f.Seek error branch itself",
         LOGPUSH,
         "The fix stopped discarding this error, and the branch it added cannot "
@@ -116,6 +107,89 @@ UNSCORABLE = [
 
 
 MUTATIONS = [
+    # ---- cmd/openclaw-logpush: the flag defaults ---------------------------
+    # The rows this scorer printed under NOT SCORED until the parseFlags seam
+    # landed. Every one of them is a value that ships and that no test used to
+    # be able to name.
+    Mutation(
+        "logpush: -logstack-url default port",
+        LOGPUSH,
+        'fs.StringVar(&c.logstackURL, "logstack-url", "http://localhost:8088", "logstack base URL")',
+        'fs.StringVar(&c.logstackURL, "logstack-url", "http://localhost:8089", "logstack base URL")',
+        True,
+        "TestFlagDefaultsAreTheValuesThatShip",
+        "The richest of this family. Every other test in the package supplies "
+        "the URL explicitly, so before the seam this port was the one value in "
+        "the file no test had ever used. Move it and a daemon started with no "
+        "-logstack-url pushes into a port nothing is listening on.",
+    ),
+    Mutation(
+        "logpush: -interval default",
+        LOGPUSH,
+        'fs.DurationVar(&c.interval, "interval", 5*time.Second, "poll interval")',
+        'fs.DurationVar(&c.interval, "interval", 10*time.Second, "poll interval")',
+        True,
+        "TestFlagDefaultsAreTheValuesThatShip",
+        "Halves the polling rate of every session file. Nothing else in the "
+        "package reads this value, so nothing else could have noticed.",
+    ),
+    Mutation(
+        "logpush: -backfill default flipped on",
+        LOGPUSH,
+        'fs.BoolVar(&c.backfill, "backfill", false, "push all existing messages on first run")',
+        'fs.BoolVar(&c.backfill, "backfill", true, "push all existing messages on first run")',
+        True,
+        "TestFlagDefaultsAreTheValuesThatShip",
+        "A boolean default, not a number, and the reason the enumeration should "
+        "not have stopped at the two literals it named: the first run replays "
+        "every message in every session file on disk into logstack.",
+    ),
+    Mutation(
+        "logpush: -dry-run default flipped on",
+        LOGPUSH,
+        'fs.BoolVar(&c.dryRun, "dry-run", false, "print what would be pushed")',
+        'fs.BoolVar(&c.dryRun, "dry-run", true, "print what would be pushed")',
+        True,
+        "TestFlagDefaultsAreTheValuesThatShip",
+        "The worst failure mode in this group and the quietest. The daemon "
+        "starts, discovers every session, logs what it WOULD push, pushes "
+        "nothing, and returns after the first poll. Nothing is red anywhere.",
+    ),
+    Mutation(
+        "logpush: home-relative data directory",
+        LOGPUSH,
+        'c.openclawDir = filepath.Join(homeDirectory, ".openclaw")',
+        'c.openclawDir = filepath.Join(homeDirectory, ".openclaw-data")',
+        True,
+        "TestOpenclawDirectoryDefaultsToOpenclawUnderHome",
+        "Never enumerated by the card that asked for this seam. It was "
+        "unreachable for exactly the same reason -- computed inside main() -- "
+        "and discoverSessions returns an empty list for a directory that is "
+        "not there, so a wrong default pushes nothing and logs no error.",
+    ),
+    Mutation(
+        "logpush: cursor file path",
+        LOGPUSH,
+        '"openclaw-logpush", "cursors.json")',
+        '"openclaw-logpush", "cursor.json")',
+        True,
+        "TestCursorFilePathIsUnderTheHomeConfigDirectory",
+        "Also never enumerated. The offsets recording what has already been "
+        "pushed; point it somewhere else and a restarted daemon loads no "
+        "cursors, which loadCursors reports as an empty map rather than an "
+        "error.",
+    ),
+    Mutation(
+        "logpush: -interval usage text reworded",
+        LOGPUSH,
+        'fs.DurationVar(&c.interval, "interval", 5*time.Second, "poll interval")',
+        'fs.DurationVar(&c.interval, "interval", 5*time.Second, "how often to poll")',
+        False,
+        None,
+        "Known-negative for the six rows above. The help string is not a "
+        "value, and a suite that reddens here is pinning the source line "
+        "rather than the default it carries.",
+    ),
     # ---- internal/format: the metric zero-guards ---------------------------
     # Six literals across two functions. Widen any one to `> 1` and a metric of
     # exactly 1 vanishes from the rendered line while every other value keeps

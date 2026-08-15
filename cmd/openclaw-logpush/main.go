@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -388,34 +389,89 @@ func processFile(path, agent, sessionID string, offset int64, dryRun bool, logst
 	return newOffset, count, nil
 }
 
-func main() {
-	logstackURL := flag.String("logstack-url", "http://localhost:8088", "logstack base URL")
-	openclawDir := flag.String("openclaw-dir", "", "OpenClaw data dir (default: ~/.openclaw)")
-	interval := flag.Duration("interval", 5*time.Second, "poll interval")
-	backfill := flag.Bool("backfill", false, "push all existing messages on first run")
-	dryRun := flag.Bool("dry-run", false, "print what would be pushed")
-	flag.Parse()
+// config is every value openclaw-logpush reads off its command line.
+type config struct {
+	logstackURL string
+	openclawDir string
+	interval    time.Duration
+	backfill    bool
+	dryRun      bool
+}
 
-	if *openclawDir == "" {
-		home, _ := os.UserHomeDir()
-		*openclawDir = filepath.Join(home, ".openclaw")
+// parseFlags builds the flag set and parses args into a config.
+//
+// The flag set lives here rather than in main() so that a test can reach the
+// defaults. Registered inside main() they were unreachable — nothing in a test
+// can call main() — and the -logstack-url port and the -interval that ship were
+// the two values in this file no test had ever used: every other test supplies
+// the URL explicitly, because processFile takes it as a parameter. A default
+// every test supplies is not the value that ships.
+//
+// The flag set is a fresh FlagSet, not the package-level flag.CommandLine: a
+// test calling this twice would panic on the redefined flag, and a mistake
+// there would look like a broken fixture rather than the seam being unusable.
+// ContinueOnError is what makes it callable at all — ExitOnError would take the
+// test binary down with it on a bad argument instead of returning the error.
+func parseFlags(args []string) (config, error) {
+	fs := flag.NewFlagSet("openclaw-logpush", flag.ContinueOnError)
+	var c config
+	fs.StringVar(&c.logstackURL, "logstack-url", "http://localhost:8088", "logstack base URL")
+	fs.StringVar(&c.openclawDir, "openclaw-dir", "", "OpenClaw data dir (default: ~/.openclaw)")
+	fs.DurationVar(&c.interval, "interval", 5*time.Second, "poll interval")
+	fs.BoolVar(&c.backfill, "backfill", false, "push all existing messages on first run")
+	fs.BoolVar(&c.dryRun, "dry-run", false, "print what would be pushed")
+	if err := fs.Parse(args); err != nil {
+		return config{}, err
+	}
+	return c, nil
+}
+
+// resolveOpenclawDirectory fills in the data directory that ships when the flag
+// was left empty. Taking the home directory as an argument rather than reading
+// it keeps the default that ships — ~/.openclaw — assertable without a test
+// having to move HOME out from under itself.
+func resolveOpenclawDirectory(c config, homeDirectory string) config {
+	if c.openclawDir == "" {
+		c.openclawDir = filepath.Join(homeDirectory, ".openclaw")
+	}
+	return c
+}
+
+// cursorFilePath is where the per-session offsets are kept between runs. Same
+// argument as above: passed the home directory rather than reading it.
+func cursorFilePath(homeDirectory string) string {
+	return filepath.Join(homeDirectory, ".config", "openclaw-logpush", "cursors.json")
+}
+
+func main() {
+	cfg, err := parseFlags(os.Args[1:])
+	if err != nil {
+		// Parse has already printed the error and the usage message. These are
+		// the two exit codes flag.ExitOnError would have used, kept identical
+		// so lifting the flag set out of main() changed nothing a caller sees.
+		if errors.Is(err, flag.ErrHelp) {
+			os.Exit(0)
+		}
+		os.Exit(2)
 	}
 
 	home, _ := os.UserHomeDir()
-	cursorPath := filepath.Join(home, ".config", "openclaw-logpush", "cursors.json")
+	cfg = resolveOpenclawDirectory(cfg, home)
+
+	cursorPath := cursorFilePath(home)
 	cursors := loadCursors(cursorPath)
 
 	log.SetFlags(log.Ltime)
 	log.Printf("openclaw-logpush starting (logstack=%s, dir=%s, interval=%s, backfill=%v, dry-run=%v)",
-		*logstackURL, *openclawDir, *interval, *backfill, *dryRun)
+		cfg.logstackURL, cfg.openclawDir, cfg.interval, cfg.backfill, cfg.dryRun)
 
 	// Signal handling
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	// Initial scan — if not backfilling, set cursors to current EOF
-	if !*backfill {
-		sessions := discoverSessions(*openclawDir)
+	if !cfg.backfill {
+		sessions := discoverSessions(cfg.openclawDir)
 		for _, s := range sessions {
 			key := s.agent + "/" + filepath.Base(s.path)
 			if _, ok := cursors[key]; !ok {
@@ -425,21 +481,21 @@ func main() {
 				}
 			}
 		}
-		if !*dryRun {
+		if !cfg.dryRun {
 			saveCursors(cursorPath, cursors)
 		}
 		log.Printf("skipping existing messages (use --backfill to push history)")
 	}
 
 	poll := func() {
-		sessions := discoverSessions(*openclawDir)
+		sessions := discoverSessions(cfg.openclawDir)
 		totalNew := 0
 
 		for _, s := range sessions {
 			key := s.agent + "/" + filepath.Base(s.path)
 			cursor := cursors[key]
 
-			newOffset, count, err := processFile(s.path, s.agent, s.sessionID, cursor.Offset, *dryRun, *logstackURL)
+			newOffset, count, err := processFile(s.path, s.agent, s.sessionID, cursor.Offset, cfg.dryRun, cfg.logstackURL)
 			if err != nil {
 				log.Printf("error processing %s: %v", key, err)
 				continue
@@ -455,7 +511,7 @@ func main() {
 			}
 		}
 
-		if totalNew > 0 && !*dryRun {
+		if totalNew > 0 && !cfg.dryRun {
 			saveCursors(cursorPath, cursors)
 		}
 	}
@@ -463,13 +519,13 @@ func main() {
 	// First poll
 	poll()
 
-	if *dryRun {
+	if cfg.dryRun {
 		log.Printf("dry-run complete")
 		return
 	}
 
 	// Poll loop
-	ticker := time.NewTicker(*interval)
+	ticker := time.NewTicker(cfg.interval)
 	defer ticker.Stop()
 
 	for {
