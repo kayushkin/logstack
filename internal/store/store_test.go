@@ -567,3 +567,85 @@ func TestGroupOmitsRowsUnlessRequested(t *testing.T) {
 		}
 	}
 }
+
+// TestAnOrchestratorNameCannotEscapeTheLogDirectory pins the containment guard in
+// Write. Orchestrator is a caller-supplied label used verbatim as a filename, so
+// before the guard a value like "../../victim" resolved the append outside the
+// date directory and outside the log root entirely — a remote, unauthenticated
+// POST could create or append to any file whose parent directory already existed.
+//
+// Measured live on 2026-08-16 (the 262nd nightly pass) against the running
+// service on *:8088: `{"orchestrator":"../../victim262",...}` appended a line to
+// a JSONL file one level above the log root, corrupting a pre-existing file.
+//
+// The test writes a sentinel file just outside the store's root and asserts a
+// traversal name (a) is rejected with an error and (b) leaves that sentinel and
+// its directory untouched, while an ordinary name still writes normally.
+func TestAnOrchestratorNameCannotEscapeTheLogDirectory(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "logroot")
+	// A sibling of the log root, standing in for "any existing directory a
+	// traversal can reach". A real deployment's log root has ~/.inber above it.
+	outside := filepath.Join(filepath.Dir(root), "victim.jsonl")
+	if err := os.WriteFile(outside, []byte("pre-existing line\n"), 0644); err != nil {
+		t.Fatalf("seed sentinel: %v", err)
+	}
+
+	s, err := NewFileStore(root)
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+
+	now := time.Now()
+	dateStr := now.Format("2006-01-02")
+
+	escapes := []string{
+		"../../victim", // two levels up, onto the sentinel's directory
+		"../elsewhere", // one level up, out of the date directory
+		"..",           // the date directory's parent itself
+		"sub/dir",      // a separator makes a nested path
+		"a/../../b",    // laundered traversal
+	}
+	for _, name := range escapes {
+		entry := &models.LogEntry{Orchestrator: name, Level: "info", Timestamp: now}
+		if err := s.Write(entry); err == nil {
+			t.Errorf("Write(orchestrator=%q) = nil error; want rejection", name)
+		}
+	}
+
+	// The sentinel outside the root must be byte-for-byte what we wrote.
+	got, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatalf("read sentinel: %v", err)
+	}
+	if string(got) != "pre-existing line\n" {
+		t.Errorf("sentinel outside the root was modified: %q", got)
+	}
+
+	// Nothing may have been created outside the date directory, inside the root.
+	dateDir := filepath.Join(root, dateStr)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("read root: %v", err)
+	}
+	for _, e := range entries {
+		if filepath.Join(root, e.Name()) != dateDir {
+			t.Errorf("unexpected entry in log root: %q (only the date dir %q should exist)", e.Name(), dateStr)
+		}
+	}
+
+	// Control: an ordinary name still writes, and lands inside the date directory.
+	if err := s.Write(&models.LogEntry{Orchestrator: "inber", Level: "info", Timestamp: now}); err != nil {
+		t.Fatalf("Write(orchestrator=%q) = %v; want success", "inber", err)
+	}
+	if _, err := os.Stat(filepath.Join(dateDir, "inber.jsonl")); err != nil {
+		t.Errorf("ordinary write did not land at %s: %v", filepath.Join(dateDir, "inber.jsonl"), err)
+	}
+
+	// Control: an empty name still maps to unknown.jsonl, as before.
+	if err := s.Write(&models.LogEntry{Orchestrator: "", Level: "info", Timestamp: now}); err != nil {
+		t.Fatalf("Write(orchestrator=\"\") = %v; want success", err)
+	}
+	if _, err := os.Stat(filepath.Join(dateDir, "unknown.jsonl")); err != nil {
+		t.Errorf("empty name did not land at unknown.jsonl: %v", err)
+	}
+}

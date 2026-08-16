@@ -88,6 +88,22 @@ func NewFileStore(baseDir string) (*FileStore, error) {
 	return store, nil
 }
 
+// isSafeSegment reports whether name is a single path segment that cannot escape
+// the directory it is joined into: no path separator, no ".."/".", and nothing a
+// later filepath.Clean would reinterpret. It is deliberately strict — the only
+// legitimate orchestrator names are short identifiers.
+func isSafeSegment(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	if strings.ContainsRune(name, '/') || strings.ContainsRune(name, '\\') || strings.ContainsRune(name, 0) {
+		return false
+	}
+	// filepath.Base collapses any residual separators/traversal to a single
+	// element; if that changes the name, it was not one clean segment.
+	return filepath.Base(name) == name
+}
+
 // Write adds a new log entry to the store
 func (s *FileStore) Write(entry *models.LogEntry) error {
 	if entry.ID == "" {
@@ -103,10 +119,20 @@ func (s *FileStore) Write(entry *models.LogEntry) error {
 	// Organize by date and orchestrator
 	// Structure: baseDir/YYYY-MM-DD/orchestrator.jsonl
 	dateStr := entry.Timestamp.Format("2006-01-02")
-	filename := fmt.Sprintf("%s.jsonl", entry.Orchestrator)
-	if entry.Orchestrator == "" {
-		filename = "unknown.jsonl"
+
+	// Orchestrator is a caller-supplied label used verbatim as a filename, so a
+	// name like "../../victim" resolves the append OUTSIDE the date directory and
+	// even outside the log root — a remote caller then creates or appends to any
+	// file whose parent directory already exists. The field is meant to be a
+	// single short token ("inber", "openclaw"); anything that is not a single safe
+	// path segment is malformed, so reject it here rather than let it name a path.
+	orchestrator := entry.Orchestrator
+	if orchestrator == "" {
+		orchestrator = "unknown"
+	} else if !isSafeSegment(orchestrator) {
+		return fmt.Errorf("invalid orchestrator name %q: must be a single path segment", entry.Orchestrator)
 	}
+	filename := fmt.Sprintf("%s.jsonl", orchestrator)
 
 	dir := filepath.Join(s.baseDir, dateStr)
 	if err := os.MkdirAll(dir, 0755); err != nil {
