@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/kayushkin/logstack/models"
@@ -25,6 +26,28 @@ func New(baseURL string) *Client {
 			Timeout: 10 * time.Second,
 		},
 	}
+}
+
+// escapePathSegment percent-encodes a value so it occupies exactly one path
+// segment on the wire.
+//
+// Neither value this is applied to is the client's own. A log id is the one
+// logstack minted and handed back; a group field is whatever the caller asked
+// to group by, and the set of fields the server understands lives in
+// internal/store.GroupFields, which a client outside this module cannot read.
+// Concatenated raw, either one addresses a different endpoint than the one
+// asked for, and does so silently: net/http drops a fragment and everything
+// after it before the request leaves, so Get("log#frag") asks for the log
+// called "log", and Get("../stats") asks for the statistics endpoint.
+//
+// PathEscape, not QueryEscape: QueryEscape writes a space as "+", which is a
+// literal plus in a path.
+//
+// This does not decide whether a value is valid — the server still answers
+// that, and GroupLogs returns 400 with the field set it accepts. It decides
+// only that the server is asked about the value the caller supplied.
+func escapePathSegment(segment string) string {
+	return url.PathEscape(segment)
 }
 
 // Log sends a single log entry
@@ -145,7 +168,7 @@ func (c *Client) Query(params models.QueryParams) ([]models.LogEntry, error) {
 
 // Get retrieves a single log by ID
 func (c *Client) Get(id string) (*models.LogEntry, error) {
-	resp, err := c.httpClient.Get(c.baseURL + "/api/v1/logs/" + id)
+	resp, err := c.httpClient.Get(c.baseURL + "/api/v1/logs/" + escapePathSegment(id))
 	if err != nil {
 		return nil, fmt.Errorf("get request: %w", err)
 	}
@@ -208,7 +231,7 @@ func (c *Client) Stats(params models.QueryParams) (*models.Stats, error) {
 
 // Group retrieves logs grouped by a specific field
 func (c *Client) Group(params models.QueryParams, groupBy string) ([]models.GroupedLogs, error) {
-	req, err := http.NewRequest("GET", c.baseURL+"/api/v1/logs/group/"+groupBy, nil)
+	req, err := http.NewRequest("GET", c.baseURL+"/api/v1/logs/group/"+escapePathSegment(groupBy), nil)
 	if err != nil {
 		return nil, err
 	}
