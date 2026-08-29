@@ -301,14 +301,37 @@ func seedCorpus(t *testing.T, n int) *FileStore {
 	// entry in the past, so no row lands in a day-dir ahead of the window.
 	base := time.Now().Add(-span)
 	ts := base
+
+	// Deliberately UNEVEN bucket sizes. With `[i%5]` every orchestrator held
+	// exactly n/5 entries, so Group's documented "biggest bucket first" rule had
+	// nothing to order: every comparison was a tie and fell through to the key
+	// comparison beside it. The assertion for that rule could not fail on any
+	// date, and a mutation inverting Group's count comparison was caught by no
+	// test in the repository. Measured, not assumed. The sizes below are 150 /
+	// 69 / 50 / 20 / 11 at n=300 -- five distinct counts, so every adjacent pair
+	// in the sorted result is decided by the count branch rather than the key.
+	orchestrators := []string{"scheduler", "openclaw", "inber", "si", "nightly-worker"}
 	for i := 0; i < n; i++ {
 		if i%7 != 0 {
 			ts = base.Add(time.Duration(i) * time.Second)
 		} // else: reuse the previous timestamp, creating a tie
+		var orchestrator string
+		switch {
+		case i%2 == 0:
+			orchestrator = orchestrators[0]
+		case i%3 == 0:
+			orchestrator = orchestrators[1]
+		case i%5 == 0:
+			orchestrator = orchestrators[2]
+		case i%7 == 0:
+			orchestrator = orchestrators[3]
+		default:
+			orchestrator = orchestrators[4]
+		}
 		entry := &models.LogEntry{
 			ID:           fmt.Sprintf("entry-%06d", i),
 			Timestamp:    ts,
-			Orchestrator: []string{"scheduler", "openclaw", "inber", "si", "nightly-worker"}[i%5],
+			Orchestrator: orchestrator,
 			Level:        []string{"info", "error"}[i%2],
 			Type:         "outbound",
 			Content:      map[string]any{"text": fmt.Sprintf("body of entry %d", i)},
