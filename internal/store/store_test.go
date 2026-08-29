@@ -276,16 +276,49 @@ func seedCorpus(t *testing.T, n int) *FileStore {
 		t.Fatalf("NewFileStore: %v", err)
 	}
 
-	base := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	// Anchored to the clock, not to a literal date. Write() files each entry under
+	// a directory named for its own timestamp, and a query with no From/To scans
+	// the last 30 days from time.Now() — so a corpus pinned to a fixed date leaves
+	// the query window 30 days later and the store silently reads back empty. It
+	// did: this fixture said 2026-07-12, and TestGroupOmitsRowsUnlessRequested went
+	// red on 2026-08-11 and stayed red, unnoticed, because the nightly guard runs
+	// build and vet rather than go test.
+	//
+	// Local midnight, because Write and getDirsToScan both format in the local
+	// zone and a UTC-truncated base straddles the day boundary west of Greenwich.
+	// Two days back keeps the whole corpus clear of today's edge; the largest
+	// caller seeds 40,000 entries at one second apart, which is ~11h and so stays
+	// inside that one day.
+	now := time.Now()
+	base := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -2)
 	ts := base
+	// Deliberately UNEVEN bucket sizes. With `[i%5]` every orchestrator held
+	// exactly n/5 entries, so Group's documented "biggest bucket first" rule had
+	// nothing to order: every comparison was a tie and fell through to the key.
+	// The assertion for that rule could not fail, and a mutation flipping the
+	// count comparison was not caught by any test.
+	orchestrators := []string{"scheduler", "openclaw", "inber", "si", "nightly-worker"}
 	for i := 0; i < n; i++ {
 		if i%7 != 0 {
 			ts = base.Add(time.Duration(i) * time.Second)
 		} // else: reuse the previous timestamp, creating a tie
+		var orchestrator string
+		switch {
+		case i%2 == 0:
+			orchestrator = orchestrators[0]
+		case i%3 == 0:
+			orchestrator = orchestrators[1]
+		case i%5 == 0:
+			orchestrator = orchestrators[2]
+		case i%7 == 0:
+			orchestrator = orchestrators[3]
+		default:
+			orchestrator = orchestrators[4]
+		}
 		entry := &models.LogEntry{
 			ID:           fmt.Sprintf("entry-%06d", i),
 			Timestamp:    ts,
-			Orchestrator: []string{"scheduler", "openclaw", "inber", "si", "nightly-worker"}[i%5],
+			Orchestrator: orchestrator,
 			Level:        []string{"info", "error"}[i%2],
 			Type:         "outbound",
 			Content:      map[string]any{"text": fmt.Sprintf("body of entry %d", i)},
