@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -413,6 +414,14 @@ func TestBoundedQueryMatchesSortingEverything(t *testing.T) {
 		{Limit: 10, Orchestrator: "scheduler"}, // filtered
 		{Limit: 10, Level: "error", Offset: 3}, // filtered + offset
 		{Limit: 100000},                        // the "no practical limit" shape Usage uses
+
+		// Straddles the overflow guard in Query: keep = Offset+Limit wraps
+		// negative here, and the guard turns that into the unbounded path. With
+		// the guard gone the selector is built with a negative bound, len(best)
+		// < keep is false on the very first entry, and offer indexes best[0] of
+		// an empty heap. Every other row in this table keeps Offset+Limit well
+		// inside int, so none of them can tell the guard is there.
+		{Limit: math.MaxInt, Offset: 10},
 	}
 
 	for _, params := range cases {
@@ -474,12 +483,22 @@ func TestBoundedQueryDoesNotRetainTheCorpus(t *testing.T) {
 		return after.HeapAlloc - before.HeapAlloc
 	}
 
-	bounded := liveHeapOf(models.QueryParams{Limit: 100})
 	unbounded := liveHeapOf(models.QueryParams{})
 
-	if bounded > unbounded/8 {
-		t.Fatalf("Query(limit=100) retained %d bytes; the unbounded query over the same corpus retained %d. "+
-			"A bounded query is materialising the whole window again.", bounded, unbounded)
+	// Both ends of the limit axis, not just one. The guard that starts the
+	// bounded path is `params.Limit > 0`, and a single row at Limit=100 sits far
+	// enough above it that `> 0` and `> 1` are the same test: mutated to `> 1`,
+	// Limit=1 falls through to the unbounded path, retains the whole corpus, and
+	// the final `results[:Limit]` slice still hands back the right one row — so
+	// the answer stays correct while the property this test exists for is gone.
+	// Limit=1 is the smallest value the guard admits and is the row that
+	// separates them.
+	for _, limit := range []int{1, 100} {
+		bounded := liveHeapOf(models.QueryParams{Limit: limit})
+		if bounded > unbounded/8 {
+			t.Fatalf("Query(limit=%d) retained %d bytes; the unbounded query over the same corpus retained %d. "+
+				"A bounded query is materialising the whole window again.", limit, bounded, unbounded)
+		}
 	}
 }
 
@@ -714,5 +733,75 @@ func TestAnOrchestratorNameCannotEscapeTheLogDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dateDir, "unknown.jsonl")); err != nil {
 		t.Errorf("empty name did not land at unknown.jsonl: %v", err)
+	}
+}
+
+// The selector's own bound, straddled at the seam rather than through Query.
+//
+// `offer` fills the heap while len(best) < keep and displaces the weakest after
+// that, so `keep` is a boundary between two different code paths and the rows
+// that separate them are n = keep and n = keep+1.
+//
+// Query cannot ask this question. Its final `results[:Limit]` slice re-imposes
+// the bound on whatever the selector hands back, so a selector that keeps one
+// entry too many is trimmed to the right answer before any assertion sees it —
+// measured: `len(s.best) <= s.keep` and `params.Limit > 1` both leave the whole
+// package suite green through Query alone, and both are caught here. That final
+// slice is dead for every reachable input (with keep = Offset+Limit the result
+// is already at most Limit long, and the overflow path only reaches it with
+// Limit larger than any result), so it changes no answer — it just stands
+// between this boundary and every test that goes through Query. Testing the
+// selector directly is the only seam that can see it.
+func TestTheSelectorKeepsExactlyItsBoundOnEitherSideOfIt(t *testing.T) {
+	base := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
+
+	// n entries, newest last, with every 7th repeating its predecessor's
+	// timestamp so the tie-break is exercised on both sides of the bound.
+	corpus := func(n int) []models.LogEntry {
+		entries := make([]models.LogEntry, 0, n)
+		ts := base
+		for i := 0; i < n; i++ {
+			if i%7 != 0 {
+				ts = base.Add(time.Duration(i) * time.Second)
+			}
+			entries = append(entries, models.LogEntry{
+				ID:        fmt.Sprintf("entry-%04d", i),
+				Timestamp: ts,
+			})
+		}
+		return entries
+	}
+
+	for _, keep := range []int{1, 3, 10} {
+		for _, n := range []int{keep - 1, keep, keep + 1} {
+			if n < 0 {
+				continue
+			}
+			entries := corpus(n)
+
+			selector := newEntrySelector(keep)
+			for _, e := range entries {
+				selector.offer(e)
+			}
+			got := selector.sorted()
+
+			want := make([]models.LogEntry, len(entries))
+			copy(want, entries)
+			sortByTimestamp(want)
+			if len(want) > keep {
+				want = want[:keep]
+			}
+
+			if len(got) != len(want) {
+				t.Fatalf("newEntrySelector(%d) offered %d entries returned %d; sorting everything and slicing returns %d",
+					keep, n, len(got), len(want))
+			}
+			for i := range want {
+				if got[i].ID != want[i].ID {
+					t.Fatalf("newEntrySelector(%d) offered %d entries: row %d = %s, want %s",
+						keep, n, i, got[i].ID, want[i].ID)
+				}
+			}
+		}
 	}
 }
