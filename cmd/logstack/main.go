@@ -2,26 +2,31 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/kayushkin/bus"
+	"github.com/kayushkin/llm-bridge/servicesettings"
 	"github.com/kayushkin/logstack/internal/api"
+	"github.com/kayushkin/logstack/internal/config"
 	"github.com/kayushkin/logstack/internal/stats"
 	"github.com/kayushkin/logstack/internal/store"
 	"github.com/kayushkin/logstack/models"
 )
 
 func main() {
-	// Get configuration from environment
-	port := getEnv("LOGSTACK_PORT", "8081")
-	dataDir := getEnv("LOGSTACK_DATA_DIR", "./logs")
-	ginMode := getEnv("GIN_MODE", "release")
-	natsURL := getEnv("NATS_URL", "nats://localhost:4222")
+	settings, err := config.NewSettingsRegistry(servicesettings.ProcessEnvironment())
+	if err != nil {
+		log.Fatalf("read settings: %v", err)
+	}
+	port := settings.Integer(config.SettingPort)
+	dataDir := settings.String(config.SettingDataDirectory)
+	ginMode := settings.String(config.SettingGinMode)
+	natsURL := settings.String(config.SettingNATSURL)
 
 	// Set gin mode
 	gin.SetMode(ginMode)
@@ -57,13 +62,14 @@ func main() {
 
 	// Server stats endpoint
 	r.GET("/stats", serverStats.Handler())
+	r.GET("/settings", gin.WrapH(config.SettingsHandler(settings)))
 
 	// Setup routes
 	h.SetupRoutes(r)
 
 	// Start server
-	log.Printf("Log stack listening on :%s", port)
-	if err := r.Run(":" + port); err != nil {
+	log.Printf("Log stack listening on :%d", port)
+	if err := r.Run(fmt.Sprintf(":%d", port)); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }
@@ -225,9 +231,3 @@ func setupNATS(nc *bus.Client, s store.Store) {
 	}
 }
 
-func getEnv(key, defaultVal string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
-	}
-	return defaultVal
-}

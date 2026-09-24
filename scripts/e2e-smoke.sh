@@ -180,6 +180,15 @@ step "boot on :$PORT (data dir: $DATA_DIR)"
 start_server
 wait_ready
 
+step "GET /settings — the service describes itself, and nothing can be written"
+SETTINGS="$(get /settings)"
+[ "$(jq -r '.service' <<<"$SETTINGS")" = "logstack" ] || fail "/settings names the wrong service: $SETTINGS"
+[ "$(jq -r '.settings[] | select(.key=="port") | .value' <<<"$SETTINGS")" = "$PORT" ] \
+  || fail "/settings does not report the port the server listens on: $SETTINGS"
+PUT_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "$BASE/settings/port" -d '{"value":"1"}')"
+[ "$PUT_STATUS" = "404" ] || [ "$PUT_STATUS" = "405" ] || fail "PUT /settings/port answered $PUT_STATUS: a write route is mounted"
+echo "    port=$PORT read back; PUT answered $PUT_STATUS"
+
 step "POST /api/v1/logs"
 CREATE="$(post /api/v1/logs "{
     \"timestamp\": \"$NOW_UTC\",

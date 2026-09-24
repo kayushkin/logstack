@@ -145,8 +145,15 @@ client.Log(models.LogEntry{
 
 ## Environment Variables
 
+Every variable below is declared once, in `internal/config/settings.go`, with
+llm-bridge's `servicesettings`, and `GET /settings` describes them (read-only,
+as open as every other route). The server refuses to start on a port that is
+not a number and on a set `LOGSTACK_` variable nobody declared. A test fails on
+any `os.Getenv` the declarations do not name.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LOGSTACK_PORT` | 8081 | Server port |
+| `LOGSTACK_PORT` | 8081 | Server port (a whole number) |
 | `LOGSTACK_DATA_DIR` | ./logs | Log storage directory |
 | `GIN_MODE` | release | Gin framework mode |
+| `NATS_URL` | nats://localhost:4222 | NATS server for `logs.>`, `chat.*` and `logstack.query` |
