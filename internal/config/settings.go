@@ -23,6 +23,7 @@ const OwnedEnvironmentVariablePrefix = "LOGSTACK_"
 
 // Keys of the settings, as GET /settings names them.
 const (
+	SettingListenHost    = "listen_host"
 	SettingPort          = "port"
 	SettingDataDirectory = "data_directory"
 	SettingGinMode       = "gin_mode"
@@ -35,8 +36,10 @@ const (
 // operator gate: GET /settings is as open as every other route.
 func SettingDefinitions() []servicesettings.Definition {
 	return []servicesettings.Definition{
+		{Key: SettingListenHost, EnvironmentVariable: "LOGSTACK_LISTEN_HOST", Kind: msg.ServiceSettingKindWiring, ValueType: msg.ServiceSettingValueTypeString, Default: "127.0.0.1",
+			Description: "The interface the HTTP server listens on. The default is loopback, because no route asks for credentials and every LOGSTACK_URL is on this host; an empty value or 0.0.0.0 opens every route to every interface."},
 		{Key: SettingPort, EnvironmentVariable: "LOGSTACK_PORT", Kind: msg.ServiceSettingKindWiring, ValueType: msg.ServiceSettingValueTypeInteger, Default: "8081",
-			Description: "The port the HTTP server listens on, on every interface. Changing it moves the service, so every LOGSTACK_URL that points at it must be changed too."},
+			Description: "The port the HTTP server listens on, on the interface LOGSTACK_LISTEN_HOST names. Changing it moves the service, so every LOGSTACK_URL that points at it must be changed too."},
 		{Key: SettingDataDirectory, EnvironmentVariable: "LOGSTACK_DATA_DIR", Kind: msg.ServiceSettingKindPath, ValueType: msg.ServiceSettingValueTypeString, Default: "./logs",
 			Description: "The directory of .jsonl log files, relative to the working directory unless absolute. Changing it serves and writes whatever logs are there; the old logs stay where they were."},
 		{Key: SettingGinMode, EnvironmentVariable: "GIN_MODE", Kind: msg.ServiceSettingKindBehaviour, ValueType: msg.ServiceSettingValueTypeString, Default: "release",

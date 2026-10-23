@@ -2,8 +2,9 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,8 +69,9 @@ func main() {
 	h.SetupRoutes(r)
 
 	// Start server
-	log.Printf("Log stack listening on :%d", port)
-	if err := r.Run(fmt.Sprintf(":%d", port)); err != nil {
+	addr := net.JoinHostPort(settings.String(config.SettingListenHost), strconv.Itoa(port))
+	log.Printf("Log stack listening on %s", addr)
+	if err := r.Run(addr); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }
@@ -165,12 +167,12 @@ func setupNATS(nc *bus.Client, s store.Store) {
 	// Subscribe to chat.outbound for completed messages (JetStream, own consumer)
 	err = nc.JetSubscribe("chat.outbound", "logstack", func(subject string, data []byte) {
 		var msg struct {
-			Agent        string           `json:"agent"`
-			Orchestrator string           `json:"orchestrator"`
-			SessionID    string           `json:"session_id"`
-			Text         string           `json:"text"`
+			Agent        string            `json:"agent"`
+			Orchestrator string            `json:"orchestrator"`
+			SessionID    string            `json:"session_id"`
+			Text         string            `json:"text"`
 			Stats        *models.TurnStats `json:"stats"`
-			Timestamp    time.Time        `json:"timestamp"`
+			Timestamp    time.Time         `json:"timestamp"`
 		}
 		if err := json.Unmarshal(data, &msg); err != nil {
 			log.Printf("NATS: failed to unmarshal chat.outbound: %v", err)
@@ -230,4 +232,3 @@ func setupNATS(nc *bus.Client, s store.Store) {
 		log.Printf("NATS: registered reply handler for logstack.query")
 	}
 }
-
