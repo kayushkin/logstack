@@ -42,7 +42,7 @@ func SettingDefinitions() []servicesettings.Definition {
 			Description: "The port the HTTP server listens on, on the interface LOGSTACK_LISTEN_HOST names. Changing it moves the service, so every LOGSTACK_URL that points at it must be changed too."},
 		{Key: SettingDataDirectory, EnvironmentVariable: "LOGSTACK_DATA_DIR", Kind: msg.ServiceSettingKindPath, ValueType: msg.ServiceSettingValueTypeString, Default: "./logs",
 			Description: "The directory of .jsonl log files, relative to the working directory unless absolute. Changing it serves and writes whatever logs are there; the old logs stay where they were."},
-		{Key: SettingGinMode, EnvironmentVariable: "GIN_MODE", Kind: msg.ServiceSettingKindBehaviour, ValueType: msg.ServiceSettingValueTypeString, Default: "release",
+		{Key: SettingGinMode, EnvironmentVariable: "GIN_MODE", Kind: msg.ServiceSettingKindBehavior, ValueType: msg.ServiceSettingValueTypeString, Default: "release",
 			Description: "The gin framework's mode: release, debug or test. debug adds route and warning lines to the log; any other value stops the start."},
 		{Key: SettingNATSURL, EnvironmentVariable: "NATS_URL", Kind: msg.ServiceSettingKindWiring, ValueType: msg.ServiceSettingValueTypeString, Default: "nats://localhost:4222",
 			Description: "The NATS server logstack takes log entries and chat messages from, and answers logstack.query on. If it cannot connect, logstack serves HTTP only and logs a warning."},
