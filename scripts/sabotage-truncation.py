@@ -7,7 +7,7 @@ time, and records whether the suite went red.
 
 There are two kinds of row. Helper rows break
 internal/textutil.TruncateAtRuneBoundary. Call-site rows put the plain byte cut
-back at ONE of the five sites that use it. Both are needed: a helper can score
+back at ONE of the three sites that use it. Both are needed: a helper can score
 full marks while a call site is fixed in appearance only, covered by the test
 for the cut in the function next to it.
 
@@ -34,16 +34,14 @@ import sys
 
 HELPER = "internal/textutil/textutil.go"
 FORMAT = "internal/format/format.go"
-LOGPUSH = "cmd/openclaw-logpush/main.go"
 
 PACKAGES = [
     "./internal/textutil/",
     "./internal/format/",
-    "./cmd/openclaw-logpush/",
 ]
 
 # The marker the test files prefix onto every reach-guard failure. Keep in sync
-# with the reachGuard consts in the three test files.
+# with the reachGuard consts in the test files.
 REACH_GUARD = "REACH-GUARD: "
 
 
@@ -106,11 +104,10 @@ MUTATIONS = [
         "if len(s) <= maxBytes {",
         "if len(s) <= -1 {",
         True,
-        "TestDryRunLogLineSurvivesAShortOrMultibyteSessionID",
-        "Removes the protection the unguarded sessionID[:8] site depends on. "
-        "That site has no length guard of its own, so this is the row proving "
-        "the panic is fixed in the helper rather than worked around at the call "
-        "site.",
+        None,
+        "Removes the protection a caller with no length guard of its own "
+        "depends on: a string shorter than the budget panics instead of "
+        "coming back whole.",
     ),
     Mutation(
         "helper: KNOWN NEGATIVE, clamp boundary rewritten",
@@ -132,7 +129,7 @@ MUTATIONS = [
         "Also identical for every integer. Second known-negative, because one "
         "can pass by luck.",
     ),
-    # ---- the five call sites ----------------------------------------------
+    # ---- the three call sites ---------------------------------------------
     Mutation(
         "site: Summary, string content (50)",
         FORMAT,
@@ -163,28 +160,6 @@ MUTATIONS = [
         "TestTableCutsContentOnARuneBoundary",
         "A third site with a different budget, so a test hard-coded to 50 would "
         "miss it.",
-    ),
-    Mutation(
-        "site: dry-run message text (80)",
-        LOGPUSH,
-        't = textutil.TruncateAtRuneBoundary(t, 80) + "..."',
-        't = t[:80] + "..."',
-        True,
-        "TestDryRunTextCutStaysValidUTF8",
-        "The card's logpush site. Driven through processFile, not the helper: "
-        "the first draft of this test called the helper and passed against the "
-        "unfixed cut.",
-    ),
-    Mutation(
-        "site: dry-run session id (8, unguarded)",
-        LOGPUSH,
-        "agent, textutil.TruncateAtRuneBoundary(sessionID, 8), role, text",
-        "agent, sessionID[:8], role, text",
-        True,
-        "TestDryRunLogLineSurvivesAShortOrMultibyteSessionID",
-        "The site no scan in this sweep could find, because it has no length "
-        "guard to match on. Reverting it restores both the panic on a short "
-        "filename stem and the corruption on a multi-byte one.",
     ),
     # ---- the boundary VALUES ----------------------------------------------
     # Every row above breaks a MECHANISM: the walk-back, or a call site's use of
@@ -304,42 +279,11 @@ MUTATIONS = [
         "TestTableCutsContentAtExactlyFortyBytes",
         "The Table guard's twin.",
     ),
-    Mutation(
-        "value: dry-run text guard 80 -> 81",
-        LOGPUSH,
-        "if len(t) > 80 {",
-        "if len(t) > 81 {",
-        True,
-        "TestDryRunTextIsCutOneByteOverItsBudget",
-        "A message of exactly 81 bytes is logged whole.",
-    ),
-    Mutation(
-        "value: dry-run text budget 80 -> 79",
-        LOGPUSH,
-        "t = textutil.TruncateAtRuneBoundary(t, 80)",
-        "t = textutil.TruncateAtRuneBoundary(t, 79)",
-        True,
-        "TestDryRunTextIsCutAtExactlyEightyBytes",
-        "The guard's twin, and the rune-boundary fixture cannot see it: its "
-        "four-byte rune spans offsets 78..81, so a cut at 79 and a cut at 80 "
-        "both walk back to 78 and produce the same string.",
-    ),
-    Mutation(
-        "value: dry-run session id 8 -> 7",
-        LOGPUSH,
-        "textutil.TruncateAtRuneBoundary(sessionID, 8)",
-        "textutil.TruncateAtRuneBoundary(sessionID, 7)",
-        True,
-        "TestDryRunLogLineSurvivesAShortOrMultibyteSessionID",
-        "The one value already pinned when this sweep arrived, and by accident "
-        "of shape rather than intent: the existing case list asserts the exact "
-        "prefix with its trailing space, so any move of this number reddens it.",
-    ),
     # ---- one known-negative per target -------------------------------------
-    # The two above are both in the helper, so before this sweep FORMAT and
-    # LOGPUSH had no control at all: a dead harness there was indistinguishable
-    # from a clean sheet. Each of these is a rewrite that is identical for every
-    # integer, so it must go UNNOTICED.
+    # The two above are both in the helper, so before this sweep FORMAT had no
+    # control at all: a dead harness there was indistinguishable from a clean
+    # sheet. This is a rewrite that is identical for every integer, so it must
+    # go UNNOTICED.
     Mutation(
         "KNOWN NEGATIVE, format: Table guard rewritten",
         FORMAT,
@@ -350,17 +294,6 @@ MUTATIONS = [
         "Identical for every integer. FORMAT's control: without it, a format "
         "run that reddens on any edit at all scores the same as one that "
         "detects the defect.",
-    ),
-    Mutation(
-        "KNOWN NEGATIVE, logpush: dry-run text guard rewritten",
-        LOGPUSH,
-        "if len(t) > 80 {",
-        "if len(t) >= 81 {",
-        False,
-        None,
-        "Identical for every integer. LOGPUSH's control, and the package where "
-        "one is worth most: its tests drive a whole file through processFile, "
-        "so they have the most ways to redden for reasons of their own.",
     ),
 ]
 
@@ -478,8 +411,8 @@ def self_test():
     being able to reach each branch.
     """
     repo = os.path.realpath(".")
-    src = os.path.join(repo, LOGPUSH)
-    test = os.path.join(repo, "cmd/openclaw-logpush/main_test.go")
+    src = os.path.join(repo, FORMAT)
+    test = os.path.join(repo, "internal/format/format_test.go")
 
     cases = [
         ("build failure -> VOID", "internal/format/format.go:12:3: undefined: nope\n", False, "VOID"),
@@ -492,23 +425,23 @@ def self_test():
         ),
         (
             "reach-guard alone -> GUARD ONLY",
-            "--- FAIL: TestA (0.00s)\n    main_test.go:85: " + REACH_GUARD + "processFile: boom\nFAIL\n",
+            "--- FAIL: TestA (0.00s)\n    format_test.go:52: " + REACH_GUARD + "Summary: boom\nFAIL\n",
             True,
             "GUARD ONLY",
         ),
         (
             "guard + assertion -> CAUGHT",
-            "--- FAIL: TestA (0.00s)\n    main_test.go:85: " + REACH_GUARD + "boom\n"
+            "--- FAIL: TestA (0.00s)\n    format_test.go:52: " + REACH_GUARD + "boom\n"
             "    format_test.go:48: not valid UTF-8\nFAIL\n",
             True,
             "CAUGHT",
         ),
         (
             "panic in production source -> CAUGHT",
-            "panic: runtime error: slice bounds out of range [:8]\n"
+            "panic: runtime error: slice bounds out of range [:50]\n"
             "\t/usr/lib/go/src/runtime/panic.go:860 +0x13a\n"
-            "\t" + src + ":328 +0xb31\n"
-            "\t" + test + ":78 +0x38\nFAIL\n",
+            "\t" + src + ":113 +0xb31\n"
+            "\t" + test + ":52 +0x38\nFAIL\n",
             True,
             "CAUGHT",
         ),
@@ -516,7 +449,7 @@ def self_test():
             "panic in the fixture -> GUARD ONLY",
             "panic: runtime error: index out of range\n"
             "\t/usr/lib/go/src/runtime/panic.go:860 +0x13a\n"
-            "\t" + test + ":161 +0x38\nFAIL\n",
+            "\t" + test + ":61 +0x38\nFAIL\n",
             True,
             "GUARD ONLY",
         ),
@@ -556,7 +489,7 @@ def control_summary(rows):
       NONE     nothing was measured here; the score is unqualified
     """
     lines = []
-    for path in (HELPER, FORMAT, LOGPUSH):
+    for path in (HELPER, FORMAT):
         negs = [r for r in rows if not r[0].real and r[0].path == path]
         if not negs:
             state = "NONE     no known-negative for this target; its score is unqualified"
@@ -601,14 +534,14 @@ def self_test_control_summary():
 
 
 def main():
-    for p in (HELPER, FORMAT, LOGPUSH):
+    for p in (HELPER, FORMAT):
         if not os.path.exists(p):
             sys.exit(f"run me from the repo root; missing {p}")
 
     self_test()
     self_test_control_summary()
 
-    originals = {p: open(p).read() for p in (HELPER, FORMAT, LOGPUSH)}
+    originals = {p: open(p).read() for p in (HELPER, FORMAT)}
 
     # The source above holds a deliberately broken version of itself from the
     # write in the loop below until the restore after the suite runs. The
@@ -691,12 +624,10 @@ def main():
         sys.exit("the fix is NOT present after the run")
     if open(FORMAT).read().count("textutil.TruncateAtRuneBoundary") != 3:
         sys.exit("format.go does not have its 3 fixed sites after the run")
-    if open(LOGPUSH).read().count("textutil.TruncateAtRuneBoundary") != 2:
-        sys.exit("main.go does not have its 2 fixed sites after the run")
     built, out = run_tests()
     if not built or "FAIL" in out:
         sys.exit("suite is not green after restore:\n" + out)
-    print("restored, all 5 sites asserted present, suite green\n")
+    print("restored, all 3 sites asserted present, suite green\n")
 
     real = [r for r in rows if r[0].real]
     negs = [r for r in rows if not r[0].real]

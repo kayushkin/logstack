@@ -41,7 +41,7 @@ const groupFieldFloor = 9
 func TestGroupFieldsAreHandled(t *testing.T) {
 	entry := &models.LogEntry{
 		Timestamp:    time.Now(),
-		Orchestrator: "openclaw",
+		Orchestrator: "jig",
 		Agent:        "brigid",
 		Channel:      "discord",
 		Model:        "claude-opus-4-8",
@@ -126,7 +126,7 @@ func TestQueryDoesNotTakeTheIndexLock(t *testing.T) {
 	}
 	if err := store.Write(&models.LogEntry{
 		Timestamp:    time.Now(),
-		Orchestrator: "openclaw",
+		Orchestrator: "jig",
 		Content:      "hello",
 	}); err != nil {
 		t.Fatalf("seed Write: %v", err)
@@ -374,7 +374,7 @@ func seedCorpus(t *testing.T, n int) *FileStore {
 	// test in the repository. Measured, not assumed. The sizes below are 150 /
 	// 69 / 50 / 20 / 11 at n=300 -- five distinct counts, so every adjacent pair
 	// in the sorted result is decided by the count branch rather than the key.
-	orchestrators := []string{"scheduler", "openclaw", "inber", "si", "nightly-worker"}
+	orchestrators := []string{"scheduler", "jig", "inber", "si", "nightly-worker"}
 	for i := 0; i < n; i++ {
 		if i%7 != 0 {
 			ts = base.Add(time.Duration(i) * time.Second)
@@ -658,7 +658,7 @@ func TestAnOversizedLineFailsTheQueryInsteadOfTruncatingIt(t *testing.T) {
 	last, _ := json.Marshal(models.LogEntry{ID: "after-the-oversized-line", Timestamp: time.Now(), Content: "b"})
 
 	line := append(append(append(append(first, '\n'), huge...), '\n'), last...)
-	if err := os.WriteFile(filepath.Join(day, "openclaw.jsonl"), append(line, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(day, "jig.jsonl"), append(line, '\n'), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -666,7 +666,7 @@ func TestAnOversizedLineFailsTheQueryInsteadOfTruncatingIt(t *testing.T) {
 	if err == nil {
 		t.Fatal("Query returned no error over a file with an oversized line: it silently dropped every entry after it")
 	}
-	if !strings.Contains(err.Error(), "openclaw.jsonl") {
+	if !strings.Contains(err.Error(), "jig.jsonl") {
 		t.Fatalf("Query error %q does not name the file it could not read", err)
 	}
 }

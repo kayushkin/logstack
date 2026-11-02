@@ -124,7 +124,7 @@ func (s *FileStore) Write(entry *models.LogEntry) error {
 	// name like "../../victim" resolves the append OUTSIDE the date directory and
 	// even outside the log root — a remote caller then creates or appends to any
 	// file whose parent directory already exists. The field is meant to be a
-	// single short token ("inber", "openclaw"); anything that is not a single safe
+	// single short token ("inber"); anything that is not a single safe
 	// path segment is malformed, so reject it here rather than let it name a path.
 	orchestrator := entry.Orchestrator
 	if orchestrator == "" {

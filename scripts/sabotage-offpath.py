@@ -1,26 +1,19 @@
 #!/usr/bin/env python3
 """Score the literals in logstack that are NOT on the truncation path.
 
-scripts/sabotage-truncation.py scores 22 rows and every one of them is a
+scripts/sabotage-truncation.py scores 20 rows and every one of them is a
 truncation boundary. That is the whole of its remit. The numbers next to those
-cuts -- the chunk size, the status threshold, the scanner's line ceiling, the
-file modes, the zero-guards on every metric, the table's column widths -- were
+cuts -- the zero-guards on every metric and the table's column widths -- were
 enumerated by the 186th nightly pass and never scored by anything.
 
 This is their scorer. Same instrument, different targets: put each defect back
 one at a time and record whether the suite goes red.
 
-One enumerated branch cannot be reached at all, and is printed by name at the
-end of every run rather than dropped, because a scorer that silently omits what
-it cannot measure reads exactly like one that measured everything.
-
-Until 2026-08-15 there were three, and two of them were the flag defaults: they
-were registered inside main(), and nothing in a test can call main(). The seam
-those rows asked for — lifting the flag set into parseFlags(args) — was built,
-and it turned out to rescue more than the two literals that were named. The
-home-relative data directory and the cursor file path were unreachable for the
-same reason and were never enumerated, so six rows below are flag-default rows
-where the NOT SCORED list predicted two.
+A literal no mutation can reach is printed by name at the end of every run
+rather than dropped, because a scorer that silently omits what it cannot
+measure reads exactly like one that measured everything. The list is empty now:
+its only entry was in the session-log pusher, removed with its rows.
+It stays so the next unreachable literal has somewhere to go.
 
 Verdicts
 --------
@@ -44,13 +37,11 @@ import subprocess
 import sys
 
 FORMAT = "internal/format/format.go"
-LOGPUSH = "cmd/openclaw-logpush/main.go"
 
-TARGETS = (FORMAT, LOGPUSH)
+TARGETS = (FORMAT,)
 
 PACKAGES = [
     "./internal/format/",
-    "./cmd/openclaw-logpush/",
 ]
 
 # The marker the test files prefix onto every reach-guard failure. Keep in sync
@@ -92,104 +83,10 @@ class Unscorable:
 
 
 UNSCORABLE = [
-    Unscorable(
-        "logpush: the f.Seek error branch itself",
-        LOGPUSH,
-        "The fix stopped discarding this error, and the branch it added cannot "
-        "be driven from a test. Seek(0, io.SeekCurrent) on an open, healthy "
-        "file does not fail, and processFile opens the file itself, so a test "
-        "has no way to hand it a descriptor that would. The WHENCE argument is "
-        "scored as a real row; the error check guarding it is reachable only "
-        "with a seam -- an injectable opener -- which this row does not "
-        "assume is worth adding. Named so the gap is not read as coverage.",
-    ),
 ]
 
 
 MUTATIONS = [
-    # ---- cmd/openclaw-logpush: the flag defaults ---------------------------
-    # The rows this scorer printed under NOT SCORED until the parseFlags seam
-    # landed. Every one of them is a value that ships and that no test used to
-    # be able to name.
-    Mutation(
-        "logpush: -logstack-url default port",
-        LOGPUSH,
-        'fs.StringVar(&c.logstackURL, "logstack-url", "http://localhost:8088", "logstack base URL")',
-        'fs.StringVar(&c.logstackURL, "logstack-url", "http://localhost:8089", "logstack base URL")',
-        True,
-        "TestFlagDefaultsAreTheValuesThatShip",
-        "The richest of this family. Every other test in the package supplies "
-        "the URL explicitly, so before the seam this port was the one value in "
-        "the file no test had ever used. Move it and a daemon started with no "
-        "-logstack-url pushes into a port nothing is listening on.",
-    ),
-    Mutation(
-        "logpush: -interval default",
-        LOGPUSH,
-        'fs.DurationVar(&c.interval, "interval", 5*time.Second, "poll interval")',
-        'fs.DurationVar(&c.interval, "interval", 10*time.Second, "poll interval")',
-        True,
-        "TestFlagDefaultsAreTheValuesThatShip",
-        "Halves the polling rate of every session file. Nothing else in the "
-        "package reads this value, so nothing else could have noticed.",
-    ),
-    Mutation(
-        "logpush: -backfill default flipped on",
-        LOGPUSH,
-        'fs.BoolVar(&c.backfill, "backfill", false, "push all existing messages on first run")',
-        'fs.BoolVar(&c.backfill, "backfill", true, "push all existing messages on first run")',
-        True,
-        "TestFlagDefaultsAreTheValuesThatShip",
-        "A boolean default, not a number, and the reason the enumeration should "
-        "not have stopped at the two literals it named: the first run replays "
-        "every message in every session file on disk into logstack.",
-    ),
-    Mutation(
-        "logpush: -dry-run default flipped on",
-        LOGPUSH,
-        'fs.BoolVar(&c.dryRun, "dry-run", false, "print what would be pushed")',
-        'fs.BoolVar(&c.dryRun, "dry-run", true, "print what would be pushed")',
-        True,
-        "TestFlagDefaultsAreTheValuesThatShip",
-        "The worst failure mode in this group and the quietest. The daemon "
-        "starts, discovers every session, logs what it WOULD push, pushes "
-        "nothing, and returns after the first poll. Nothing is red anywhere.",
-    ),
-    Mutation(
-        "logpush: home-relative data directory",
-        LOGPUSH,
-        'c.openclawDir = filepath.Join(homeDirectory, ".openclaw")',
-        'c.openclawDir = filepath.Join(homeDirectory, ".openclaw-data")',
-        True,
-        "TestOpenclawDirectoryDefaultsToOpenclawUnderHome",
-        "Never enumerated by the card that asked for this seam. It was "
-        "unreachable for exactly the same reason -- computed inside main() -- "
-        "and discoverSessions returns an empty list for a directory that is "
-        "not there, so a wrong default pushes nothing and logs no error.",
-    ),
-    Mutation(
-        "logpush: cursor file path",
-        LOGPUSH,
-        '"openclaw-logpush", "cursors.json")',
-        '"openclaw-logpush", "cursor.json")',
-        True,
-        "TestCursorFilePathIsUnderTheHomeConfigDirectory",
-        "Also never enumerated. The offsets recording what has already been "
-        "pushed; point it somewhere else and a restarted daemon loads no "
-        "cursors, which loadCursors reports as an empty map rather than an "
-        "error.",
-    ),
-    Mutation(
-        "logpush: -interval usage text reworded",
-        LOGPUSH,
-        'fs.DurationVar(&c.interval, "interval", 5*time.Second, "poll interval")',
-        'fs.DurationVar(&c.interval, "interval", 5*time.Second, "how often to poll")',
-        False,
-        None,
-        "Known-negative for the six rows above. The help string is not a "
-        "value, and a suite that reddens here is pinning the source line "
-        "rather than the default it carries.",
-    ),
     # ---- internal/format: the metric zero-guards ---------------------------
     # Six literals across two functions. Widen any one to `> 1` and a metric of
     # exactly 1 vanishes from the rendered line while every other value keeps
@@ -312,216 +209,6 @@ MUTATIONS = [
         "reddens on any edit at all to this file scores the same as one that "
         "detects the defect.",
     ),
-    # ---- cmd/openclaw-logpush: the chunking --------------------------------
-    # The richest pair in the file. The chunk size is spelled twice and the two
-    # spellings have to agree; nothing tests the chunking at all, and the
-    # consequence is duplicated or missing log rows in production.
-    Mutation(
-        "logpush: chunk STEP moved",
-        LOGPUSH,
-        "for i := 0; i < len(batch); i += 50 {",
-        "for i := 0; i < len(batch); i += 51 {",
-        True,
-        None,
-        "The step advances past one entry the end never reached, so one entry "
-        "per chunk is silently dropped -- a log line that existed on disk and "
-        "never arrives.",
-    ),
-    Mutation(
-        "logpush: chunk END moved",
-        LOGPUSH,
-        "end := i + 50",
-        "end := i + 51",
-        True,
-        None,
-        "The mirror defect. The window now overlaps the next step, so one entry "
-        "per chunk is pushed twice. Both mutations keep the suite green and "
-        "both corrupt the log; only a test that counts what each chunk carried "
-        "can tell them apart.",
-    ),
-    Mutation(
-        "logpush: batch status threshold",
-        LOGPUSH,
-        "if resp.StatusCode >= 300 {",
-        "if resp.StatusCode >= 301 {",
-        True,
-        None,
-        "A 300 response is accepted as a successful push. The cursor then "
-        "advances past entries logstack never stored.",
-    ),
-    # The card enumerated this call as "the max line length, spelled twice in
-    # one call" — the same shape as the chunk size. Measured, it is not. The two
-    # spellings are the scanner's initial buffer and its maximum token size, and
-    # bufio grows the buffer up to the maximum, so the ceiling that ships is the
-    # LARGER of the two. Moving either one DOWN by one changes nothing at any
-    # line length; only moving one UP moves the ceiling. So the pair yields two
-    # real rows and two known-negatives, not two real rows.
-    Mutation(
-        "logpush: scanner max token size raised",
-        LOGPUSH,
-        "scanner.Buffer(make([]byte, 1024*1024), 1024*1024)",
-        "scanner.Buffer(make([]byte, 1024*1024), 1024*1024+1)",
-        True,
-        None,
-        "One byte up and bufio grows the buffer past its declared size, so a "
-        "line the ceiling is meant to reject is scanned. This is the ceiling "
-        "whose failure mode is filed separately as a swallowed scanner.Err(); "
-        "scoring the number is worth more than the others here because the "
-        "consequence is already known.",
-    ),
-    Mutation(
-        "logpush: scanner initial buffer raised",
-        LOGPUSH,
-        "scanner.Buffer(make([]byte, 1024*1024), 1024*1024)",
-        "scanner.Buffer(make([]byte, 1024*1024+1), 1024*1024)",
-        True,
-        None,
-        "The other spelling, moved the only direction that is observable. The "
-        "buffer starts one byte longer, so the same over-ceiling line now fits "
-        "and is scanned.",
-    ),
-    Mutation(
-        "KNOWN NEGATIVE, logpush: scanner max token size lowered",
-        LOGPUSH,
-        "scanner.Buffer(make([]byte, 1024*1024), 1024*1024)",
-        "scanner.Buffer(make([]byte, 1024*1024), 1024*1024-1)",
-        False,
-        None,
-        "Behaviour-preserving, and it is the row that corrects the card. bufio "
-        "errors when the buffer is full AND its length has reached the maximum; "
-        "the buffer here is already 1MB, so lowering the maximum to 1MB-1 "
-        "leaves the same full buffer failing the same check. A scorer that "
-        "filed this as a real defect would report a permanent hole nothing can "
-        "close.",
-    ),
-    Mutation(
-        "KNOWN NEGATIVE, logpush: scanner initial buffer lowered",
-        LOGPUSH,
-        "scanner.Buffer(make([]byte, 1024*1024), 1024*1024)",
-        "scanner.Buffer(make([]byte, 1024*1024-1), 1024*1024)",
-        False,
-        None,
-        "Behaviour-preserving for the mirrored reason: a buffer short of the "
-        "maximum is grown to it on demand, so the ceiling is unchanged.",
-    ),
-    # ---- logpush: what happens when the ceiling above is HIT -----------------
-    # The four rows above score the ceiling's VALUE. These score its failure
-    # mode, which was filed as 603e3ded and unscored by anything until the fix
-    # landed: scanner.Err() was never read, so an over-long line ended the scan
-    # exactly as a clean EOF does and the dropped entry was invisible.
-    #
-    # Note what is NOT here: a row that propagates the error instead of logging
-    # it. That is not a defect to catch, it is the open policy question 6fbf83b3
-    # asks of three repos sharing this ceiling, so it is scored as a real row
-    # below only because the SUITE must notice the change — not because the
-    # answer is settled.
-    Mutation(
-        "logpush: scan error not reported at all",
-        LOGPUSH,
-        "\tif err := scanner.Err(); err != nil {",
-        "\tif err := scanner.Err(); false {",
-        True,
-        "TestAnOverLongLineIsReportedInsteadOfPassingAsCleanEOF",
-        "The original defect, put back. An over-long entry is dropped for good "
-        "while processFile returns nil and poll() logs 'pushed N messages'. The "
-        "run reports success and the loss is silent, which is the standing "
-        "directive's first rule broken exactly.",
-    ),
-    Mutation(
-        "logpush: scan error reported without naming the session",
-        LOGPUSH,
-        'log.Printf("openclaw-logpush: %s/%s: scan stopped at offset %d of %d after %d entries: %v — the over-long entry is skipped, later entries resume on the next poll",\n\t\t\tagent, sessionID, newOffset, info.Size(), count, err)',
-        'log.Printf("openclaw-logpush: scan stopped: %v", err)',
-        True,
-        "TestAnOverLongLineIsReportedInsteadOfPassingAsCleanEOF",
-        "Half a report is the failure mode worth scoring separately: the line "
-        "appears, so a reader believes the case is handled, but it names "
-        "neither the session that lost an entry nor where in the file it "
-        "stopped. Nothing can be done with it.",
-    ),
-    Mutation(
-        "logpush: scan error propagated instead of reported",
-        LOGPUSH,
-        "\tif err := scanner.Err(); err != nil {",
-        "\tif err := scanner.Err(); err != nil {\n\t\treturn offset, count, err\n\t}\n\tif false {",
-        True,
-        "TestEntriesAfterAnOverLongLineArriveOnALaterPoll",
-        "The change the card 603e3ded asked for literally, and the reason it "
-        "was not made: poll() reads a non-nil error as 'do not advance the "
-        "cursor', so the daemon re-reads the same over-long line every tick "
-        "forever and every entry after it is lost permanently — converting a "
-        "one-entry loss into a total stall. Whoever answers 6fbf83b3 must "
-        "redden this row on purpose.",
-    ),
-    Mutation(
-        "logpush: scan error reported on every file",
-        LOGPUSH,
-        "\tif err := scanner.Err(); err != nil {",
-        "\tif err := scanner.Err(); true {",
-        True,
-        "TestACleanFileLogsNothing",
-        "A report that fires on every ordinary poll reports nothing. Scored "
-        "because the value of the fix is entirely in the line MEANING something "
-        "when it appears, and a suite that only checks the error case cannot "
-        "tell a working report from a stuck one.",
-    ),
-    Mutation(
-        "logpush: cursor position read from the wrong whence",
-        LOGPUSH,
-        "newOffset, err := f.Seek(0, io.SeekCurrent)",
-        "newOffset, err := f.Seek(0, io.SeekStart)",
-        True,
-        None,
-        "The cursor resets to the top of the file on every poll, so the daemon "
-        "re-pushes the whole session forever. Scored here rather than with the "
-        "ceiling rows because it is the same Seek whose error the fix stopped "
-        "discarding.",
-    ),
-    Mutation(
-        "logpush: cursor DIRECTORY mode",
-        LOGPUSH,
-        "os.MkdirAll(filepath.Dir(path), 0755)",
-        "os.MkdirAll(filepath.Dir(path), 0700)",
-        True,
-        None,
-        "The mode the cursor directory ships with. Moved by one permission "
-        "group rather than one bit: 0754 differs from 0755 only in a bit no "
-        "directory listing distinguishes, and the point of the row is that the "
-        "value is held, not that a mutation is minimal.",
-    ),
-    Mutation(
-        "logpush: cursor FILE mode",
-        LOGPUSH,
-        "os.WriteFile(path, data, 0644)",
-        "os.WriteFile(path, data, 0640)",
-        True,
-        None,
-        "Same for the cursor file itself.",
-    ),
-    Mutation(
-        "logpush: author capture-index guard",
-        LOGPUSH,
-        "if m := authorRe.FindStringSubmatch(text); len(m) > 1 {",
-        "if m := authorRe.FindStringSubmatch(text); len(m) > 2 {",
-        True,
-        None,
-        "The regexp has exactly one capture group, so a match is always length "
-        "2 and this guard is the only thing that reads it. Widen it and every "
-        "inbound message is attributed to 'user' regardless of its [name] "
-        "prefix.",
-    ),
-    Mutation(
-        "KNOWN NEGATIVE, logpush: status threshold rewritten",
-        LOGPUSH,
-        "if resp.StatusCode >= 300 {",
-        "if resp.StatusCode > 299 {",
-        False,
-        None,
-        "Identical for every integer status. LOGPUSH's control, and the package "
-        "where one is worth most: its tests drive whole files through "
-        "processFile and an HTTP server, so they have the most ways to redden "
-        "for reasons of their own.",
-    ),
 ]
 
 
@@ -632,8 +319,8 @@ def self_test():
     forever.
     """
     repo = os.path.realpath(".")
-    src = os.path.join(repo, LOGPUSH)
-    test = os.path.join(repo, "cmd/openclaw-logpush/main_test.go")
+    src = os.path.join(repo, FORMAT)
+    test = os.path.join(repo, "internal/format/format_test.go")
 
     cases = [
         ("build failure -> VOID", "internal/format/format.go:12:3: undefined: nope\n", False, "VOID"),
@@ -646,23 +333,23 @@ def self_test():
         ),
         (
             "reach-guard alone -> GUARD ONLY",
-            "--- FAIL: TestA (0.00s)\n    main_test.go:85: " + REACH_GUARD + "processFile: boom\nFAIL\n",
+            "--- FAIL: TestA (0.00s)\n    format_test.go:52: " + REACH_GUARD + "Summary: boom\nFAIL\n",
             True,
             "GUARD ONLY",
         ),
         (
             "guard + assertion -> CAUGHT",
-            "--- FAIL: TestA (0.00s)\n    main_test.go:85: " + REACH_GUARD + "boom\n"
+            "--- FAIL: TestA (0.00s)\n    format_test.go:52: " + REACH_GUARD + "boom\n"
             "    format_test.go:48: misaligned\nFAIL\n",
             True,
             "CAUGHT",
         ),
         (
             "panic in production source -> CAUGHT",
-            "panic: runtime error: slice bounds out of range [:8]\n"
+            "panic: runtime error: slice bounds out of range [:50]\n"
             "\t/usr/lib/go/src/runtime/panic.go:860 +0x13a\n"
-            "\t" + src + ":328 +0xb31\n"
-            "\t" + test + ":78 +0x38\nFAIL\n",
+            "\t" + src + ":113 +0xb31\n"
+            "\t" + test + ":52 +0x38\nFAIL\n",
             True,
             "CAUGHT",
         ),
@@ -670,7 +357,7 @@ def self_test():
             "panic in the fixture -> GUARD ONLY",
             "panic: runtime error: index out of range\n"
             "\t/usr/lib/go/src/runtime/panic.go:860 +0x13a\n"
-            "\t" + test + ":161 +0x38\nFAIL\n",
+            "\t" + test + ":61 +0x38\nFAIL\n",
             True,
             "GUARD ONLY",
         ),

@@ -10,7 +10,7 @@ type LogEntry struct {
 	// Timestamp when the log was created (ISO 8601)
 	Timestamp time.Time `json:"timestamp"`
 
-	// Orchestrator that ran this turn (openclaw, inber)
+	// Orchestrator that ran this turn (inber)
 	Orchestrator string `json:"orchestrator"`
 
 	// Agent/instance identifier
@@ -22,7 +22,7 @@ type LogEntry struct {
 	// Session ID for grouping related logs
 	SessionID string `json:"session_id,omitempty"`
 
-	// Turn ID — unique within a session (inber: turn number, openclaw: message id)
+	// Turn ID — unique within a session (inber: turn number)
 	TurnID string `json:"turn_id,omitempty"`
 
 	// Model used (opus46, glm-5, sonnet-4-5, etc.)
