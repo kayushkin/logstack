@@ -24,4 +24,4 @@ A systemd user unit runs the installed binary; its environment sets the port and
 
 ## Tests
 
-`go test ./...`. `cmd/openclaw-logpush` pushed the openclaw harness's session logs here; that harness is retired and nothing runs the pusher.
+`go test ./...`. `scripts/sabotage-*.py` are mutation scorers: each breaks the code on purpose and checks a test notices.
