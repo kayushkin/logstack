@@ -1,72 +1,27 @@
-# Logstack Agent
+# About logstack
 
-Centralized logging service for the inber/si ecosystem.
+## What it is
 
-## Purpose
+A small central log service: other services post log entries in one JSON shape, and logstack keeps them as JSONL files by date and source and answers queries over them. si sends its routing and error logs here (`si/logstack.go`), and inber points at it too. `README.md` shows the entry shape and examples.
 
-Maintain and extend the logstack service — unified logging, REST API, storage, formatting.
+## Where this prompt lives
 
-## Agent Config
+These sections are stored in agent-store as a project prompt collection and rendered, with identical text, to `AGENTS.md` and `CLAUDE.md` at the root of this repo, so that whichever file a harness reads it gets the same thing. Edit them on dash `/files`, or edit either rendered file: the 15-minute scan carries the edit back into the sections and out to the other file. The host prompt keeps one row for this repo with only what an agent elsewhere needs.
 
-- **Name:** logstack
-- **Model:** sonnet-4-5 (claude-sonnet-4-5)
-- **Role:** Backend service development, API design, Go code
+# How it works
 
-## Responsibilities
+## Routes and code
 
-- Add new API endpoints
-- Extend log format with new fields
-- Optimize storage and querying
-- Add new output formats
-- Integrate with inber/si for log ingestion
-- Performance improvements
-- Testing
+Every route is under `/api/v1` (`internal/api/handler.go`, gin): `POST /logs` and `POST /logs/batch` take entries; `GET /logs` queries with filters, `GET /logs/{id}` reads one, `GET /logs/group/{field}` groups them; `GET /stats`, `GET /usage`, `GET /max-usage` and `GET /rate-limits` summarise; `GET /health`. `internal/store` keeps the files, `internal/format` writes JSON, JSONL, text, table and logfmt, `models/log.go` is the entry, and `client/` is the Go client other services import. Settings are declared with llm-bridge `servicesettings` in `internal/config/settings.go` (`LOGSTACK_LISTEN_HOST`, `LOGSTACK_PORT`, `LOGSTACK_DATA_DIR`).
 
-## Always Deploy After Push
+# Access and operations
 
-Any push to main should trigger a rebuild of `~/bin/logstack`.
+## Running and deploying
 
-## Commands
+A systemd user unit runs the installed binary; its environment sets the port and the data folder, and it listens on loopback. `./deploy.sh` builds `cmd/logstack`, installs the binary where the unit's `ExecStart` expects it and restarts the unit; never build into place by hand.
 
-```bash
-# Build
-go build -o ~/bin/logstack ./cmd/logstack
+# Working in this repo
 
-# Run
-~/bin/logstack
+## Tests
 
-# Test
-go test ./...
-```
-
-## Integration Points
-
-- **inber**: Should send logs after each turn
-- **si**: Should send routing/error logs
-- **claxon-android**: Could send device logs via HTTP
-
-## API Endpoints
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/v1/logs` | POST | Ingest single log |
-| `/api/v1/logs/batch` | POST | Batch ingestion |
-| `/api/v1/logs` | GET | Query with filters |
-| `/api/v1/logs/:id` | GET | Get specific log |
-| `/api/v1/logs/group/:field` | GET | Group by field |
-| `/api/v1/stats` | GET | Aggregate statistics |
-
-## File Structure
-
-```
-logstack/
-├── cmd/logstack/main.go       # Entry point
-├── internal/
-│   ├── api/handler.go         # HTTP handlers
-│   ├── store/store.go         # File-based storage
-│   ├── format/format.go       # Output formatters
-│   ├── models/log.go          # Log entry model
-│   └── client/client.go       # Go client for integration
-├── go.mod
-└── README.md
-```
+`go test ./...`. `cmd/openclaw-logpush` pushed the openclaw harness's session logs here; that harness is retired and nothing runs the pusher.
