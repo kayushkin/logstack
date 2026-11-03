@@ -55,7 +55,7 @@ GET /api/v1/logs/group/source
 GET /api/v1/logs/group/day
 
 # Add ?logs=true to also return the rows in each bucket. Off by default:
-# a group-by is an aggregation, and returning every row re-serialises the
+# a group-by is an aggregation, and returning every row re-serializes the
 # whole corpus (tens of MB, hundreds of MB of RSS) on an anonymous GET.
 GET /api/v1/logs/group/model?logs=true
 

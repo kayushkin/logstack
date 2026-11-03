@@ -139,7 +139,7 @@ type QueryParams struct {
 	Offset    int       `form:"offset"`
 	// IncludeLogs makes a group-by return the rows in each bucket as well as the
 	// count (query param ?logs=true). Off by default: a group-by is an aggregation,
-	// and returning every row re-serialises the whole corpus on an anonymous GET.
+	// and returning every row re-serializes the whole corpus on an anonymous GET.
 	IncludeLogs bool `form:"logs"`
 }
 

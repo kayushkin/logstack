@@ -20,7 +20,7 @@ import (
 // These two drifted apart once already: models.LogEntry's Source field was
 // renamed to Orchestrator and getGroupKey was updated, but the API handler
 // kept its own hardcoded copy of the field list saying "source". Because
-// getGroupKey answers "unknown" for anything it doesn't recognise rather than
+// getGroupKey answers "unknown" for anything it doesn't recognize rather than
 // failing, GET /api/v1/logs/group/source returned HTTP 200 with every log
 // collapsed into a single "unknown" group, while group/orchestrator -- which
 // the store did support -- was rejected with a 400.
@@ -716,7 +716,7 @@ func TestGroupOrderIsDeterministic(t *testing.T) {
 }
 
 // A group-by is an aggregation: by default it must return counts only, not the rows
-// in every bucket. Returning every row re-serialised the whole corpus on an anonymous
+// in every bucket. Returning every row re-serialized the whole corpus on an anonymous
 // GET (an ~89MB response, RSS past 600MB) for rows no caller reads. The rows come back
 // only when the caller opts in with IncludeLogs (?logs=true).
 func TestGroupOmitsRowsUnlessRequested(t *testing.T) {

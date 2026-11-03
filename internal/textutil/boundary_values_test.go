@@ -13,7 +13,7 @@ import (
 // Three of the four values here were already held, and by the control rather
 // than by the sweep. TestTruncateAtRuneBoundaryLeavesAnAlignedCutAlone asserts
 // equality against input[:budget] at every aligned budget, and an equality
-// assertion pins a value as a side effect of pinning behaviour. The sweep next
+// assertion pins a value as a side effect of pinning behavior. The sweep next
 // to it asserts properties — valid UTF-8, within budget, a prefix of the input,
 // no more than a rune lost — and every one of those survives a budget that
 // drifts by one. Measured 2026-08-15 by sabotage: the value rows this file

@@ -228,10 +228,10 @@ func (s *FileStore) Query(params models.QueryParams) ([]models.LogEntry, error) 
 // — only when params.IncludeLogs is set (?logs=true) — the rows in each bucket too.
 //
 // A group-by is an aggregation: its answer is a count per key. Returning every row
-// inside every bucket by default re-serialised the whole corpus — one unscoped
+// inside every bucket by default re-serialized the whole corpus — one unscoped
 // GET /logs/group/<field> built an ~89MB response and pushed RSS past 600MB — for
 // rows that no caller reads (a caller that wants the rows uses GET /logs). So the
-// rows are opt-in, and the default anonymous call holds and serialises only counts.
+// rows are opt-in, and the default anonymous call holds and serializes only counts.
 func (s *FileStore) Group(params models.QueryParams, groupBy string) ([]models.GroupedLogs, error) {
 	entries, err := s.Query(params)
 	if err != nil {

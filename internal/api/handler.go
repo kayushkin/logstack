@@ -27,8 +27,8 @@ func NewHandler(s store.Store) *Handler {
 // Use it for the responses that carry log rows; c.JSON is fine for the small
 // fixed-shape ones. gin's c.JSON marshals the ENTIRE response into one []byte
 // before writing a single byte of it, and json.Marshal grows that buffer by
-// doubling and then copies it — so serialising the 30-day group response cost
-// ~173MB of transient heap on top of the ~90MB of entries it was serialising, to
+// doubling and then copies it — so serializing the 30-day group response cost
+// ~173MB of transient heap on top of the ~90MB of entries it was serializing, to
 // send a body the client streams anyway. Measured on the live corpus; it was a
 // quarter of the 710MB peak.
 //

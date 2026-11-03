@@ -16,7 +16,7 @@ import (
 // The space probe is here to separate PathEscape from QueryEscape (%20 against
 // +), not to witness the defect: net/url escapes a raw space to %20 on its own,
 // so an unescaped space round-trips correctly and cannot fail for the reason its
-// neighbours fail.
+// neighbors fail.
 var pathProbeValues = []struct {
 	name  string
 	value string

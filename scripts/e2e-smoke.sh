@@ -211,7 +211,7 @@ echo "    id: $LOG_ID"
 # The store is the reason this service exists. Assert it wrote where we told it
 # to — this is also what proves the run never went near the live corpus.
 EXPECT_FILE="$DATA_DIR/$DAY/$ORCH.jsonl"
-[ -f "$EXPECT_FILE" ] || fail "expected JSONL at $EXPECT_FILE — LOGSTACK_DATA_DIR not honoured?"
+[ -f "$EXPECT_FILE" ] || fail "expected JSONL at $EXPECT_FILE — LOGSTACK_DATA_DIR not honored?"
 echo "    wrote: $EXPECT_FILE"
 
 step "POST /api/v1/logs/batch (2 entries)"

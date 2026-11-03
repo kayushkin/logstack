@@ -12,7 +12,7 @@ These sections are stored in agent-store as a project prompt collection and rend
 
 ## Routes and code
 
-Every route is under `/api/v1` (`internal/api/handler.go`, gin): `POST /logs` and `POST /logs/batch` take entries; `GET /logs` queries with filters, `GET /logs/{id}` reads one, `GET /logs/group/{field}` groups them; `GET /stats`, `GET /usage`, `GET /max-usage` and `GET /rate-limits` summarise; `GET /health`. `internal/store` keeps the files, `internal/format` writes JSON, JSONL, text, table and logfmt, `models/log.go` is the entry, and `client/` is the Go client other services import. Settings are declared with llm-bridge `servicesettings` in `internal/config/settings.go` (`LOGSTACK_LISTEN_HOST`, `LOGSTACK_PORT`, `LOGSTACK_DATA_DIR`).
+Every route is under `/api/v1` (`internal/api/handler.go`, gin): `POST /logs` and `POST /logs/batch` take entries; `GET /logs` queries with filters, `GET /logs/{id}` reads one, `GET /logs/group/{field}` groups them; `GET /stats`, `GET /usage`, `GET /max-usage` and `GET /rate-limits` summarize; `GET /health`. `internal/store` keeps the files, `internal/format` writes JSON, JSONL, text, table and logfmt, `models/log.go` is the entry, and `client/` is the Go client other services import. Settings are declared with llm-bridge `servicesettings` in `internal/config/settings.go` (`LOGSTACK_LISTEN_HOST`, `LOGSTACK_PORT`, `LOGSTACK_DATA_DIR`).
 
 # Access and operations
 

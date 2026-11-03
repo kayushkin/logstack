@@ -20,7 +20,7 @@ This scorer answers two questions that have to be kept apart:
 
 Reporting (2) is the point. A floor that turns a vacuous pass into a loud
 failure is worth having, but calling it a closed coverage gap when a
-neighbouring test already fails on the same mutation would be a claim this
+neighboring test already fails on the same mutation would be a claim this
 scorer exists to refuse.
 
 Verdicts
@@ -114,7 +114,7 @@ MUTATIONS = [
         "if bounded > unbounded/8 {",
         "if bounded*8 > unbounded {",
         False,
-        "Behaviour-preserving at these magnitudes (bounded ~70KB, unbounded "
+        "Behavior-preserving at these magnitudes (bounded ~70KB, unbounded "
         "~29MB, no overflow). A scorer with no known-negative cannot tell a "
         "suite that detects the DEFECT from one that reddens whenever the "
         "source changes at all, so this row must go UNNOTICED.",
@@ -263,7 +263,7 @@ def main():
     for mut, v in rows:
         if not mut.real:
             if v["PRIOR"] != "UNNOTICED" or v["MINE"] != "UNNOTICED":
-                print("  CONTROL FAILED: %s reddened a suite; it changes no behaviour" % mut.name)
+                print("  CONTROL FAILED: %s reddened a suite; it changes no behavior" % mut.name)
                 bad += 1
             continue
         if "VOID" in v.values():

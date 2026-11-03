@@ -25,7 +25,7 @@ UNNOTICED   the suite stayed green. For a known-negative row that is the
             required result; for a real mutation it is a coverage gap.
 VOID        a package did not build, so the run measured nothing. Never a pass:
             a compile error hides whether any test would have caught the
-            behaviour.
+            behavior.
 
 Run from the repo root:  python3 scripts/sabotage-offpath.py
 """
@@ -53,7 +53,7 @@ class Mutation:
     """One defect put back into one file.
 
     `real` rows are defects the suite must catch. `real=False` rows are
-    known-negatives: behaviour-preserving rewrites that must go UNNOTICED. A
+    known-negatives: behavior-preserving rewrites that must go UNNOTICED. A
     scorer with no known-negatives cannot tell a suite that detects the defect
     from one that fails whenever the source changes at all.
     """
@@ -501,7 +501,7 @@ def main():
                 print(f"               red: {', '.join(reds)}{note}")
             if m.expect:
                 hit = m.expect in reds
-                print(f"               expected {m.expect} red: {'yes' if hit else 'NO <-- the site is covered only by its neighbour'}")
+                print(f"               expected {m.expect} red: {'yes' if hit else 'NO <-- the site is covered only by its neighbor'}")
             print(f"               {m.note}\n")
     finally:
         for p, text in originals.items():
@@ -530,7 +530,7 @@ def main():
     for line in control_summary(rows):
         print(line)
     print(f"       {len(guard_only)} rows caught by a reach-guard only")
-    print(f"       {len(missed_site)} sites covered only by a neighbouring test")
+    print(f"       {len(missed_site)} sites covered only by a neighboring test")
     bad = [r for r in rows if r[1] in ("STALE PATTERN", "AMBIGUOUS PATTERN")]
     if bad:
         print(f"       {len(bad)} rows scored nothing (stale/ambiguous pattern)")
